@@ -180,7 +180,7 @@ func main() {
 	xdpLink, err := link.AttachXDP(link.XDPOptions{
 		Program:   objs.Filter,
 		Interface: iface.Index,
-		Flags:     link.XDPGenericMode, // works on any interface includnig wifi 
+		Flags:     link.XDPGenericMode, // works on any interfact includnig wifi 
 	})
 	if err != nil {
 		log.Fatalf("attach xdp: %v", err)
