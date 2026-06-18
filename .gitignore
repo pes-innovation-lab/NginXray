@@ -19,3 +19,6 @@ coverage.*
 .DS_Store
 *~
 *.swp
+
+clang-format
+bpf/vmlinux.h
