@@ -1,4 +1,10 @@
 #include <linux/bpf.h>
+#include <linux/if_ether.h>
+#include <linux/if_packet.h>
+#include <linux/if_vlan.h>
+#include <linux/in.h>
+#include <linux/ip.h>
+#include <linux/ipv6.h>
 #include <bpf/bpf_endian.h>
 #include <bpf/bpf_helpers.h>
 #include <linux/if_ether.h>
@@ -9,6 +15,11 @@ struct lpm_key {
     __u32 prefixlen;
     __u32 ip;
 };
+struct lpm_keyipv6 {
+  __u32 prefixlen;
+  __u8 ip[16];
+};
+
 struct block_info {
     __u64 expires_at_ns;
     __u64 hit_count;
@@ -24,13 +35,35 @@ enum block_reason {
 
 // longest prefix match trie
 struct {
-    __uint(type, BPF_MAP_TYPE_LPM_TRIE);
-    __uint(max_entries, 255);
-    __uint(map_flags, BPF_F_NO_PREALLOC);
+  __uint(type, BPF_MAP_TYPE_LPM_TRIE);
+  __uint(max_entries, 1024);
+  __uint(map_flags, BPF_F_NO_PREALLOC);
 
     __type(key, struct lpm_key);
     __type(value, struct block_info);
 } lpm_map SEC(".maps");
+
+struct {
+   __uint(type, BPF_MAP_TYPE_LPM_TRIE);
+   __uint(max_entries, 1024);
+   __uint(map_flags, BPF_F_NO_PREALLOC);
+
+   __type(key, struct lpm_keyipv6);
+   __type(value, struct block_info);
+} lpm_map_ipv6 SEC(".maps");
+
+static __always_inline int check_block(struct block_info *blocked) {
+  if (!blocked)
+    return XDP_PASS;
+ 
+  __u64 now = bpf_ktime_get_ns();
+  if (blocked->expires_at_ns && now > blocked->expires_at_ns)
+    return XDP_PASS; 
+ 
+  bpf_printk("DROP reason=%d", blocked->reason);
+  __sync_fetch_and_add(&blocked->hit_count, 1);
+  return XDP_DROP;
+} //this common for both ipv4 and ipv6
 
 // define xdp section
 SEC("xdp")
@@ -78,6 +111,33 @@ int filter(struct xdp_md *ctx) {
     bpf_printk("PASS");
 
     return XDP_PASS;
+
+  // ipv4
+  if (eth->h_proto == bpf_htons(ETH_P_IP)){
+    struct iphdr *ip = (void *)(eth + 1);
+    if ((void *)(ip + 1) > data_end)
+      return XDP_PASS; 
+    bpf_printk("src=%x", bpf_ntohl(ip->saddr));
+    struct lpm_key key = {};
+    key.prefixlen = 32;
+    key.ip = ip->saddr;
+    return check_block(bpf_map_lookup_elem(&lpm_map, &key));
+  }
+
+  // ipv6
+  else if (eth->h_proto == bpf_htons(ETH_P_IPV6)){
+    struct ipv6hdr *ip6 = (void *)(eth + 1);
+    if ((void *)(ip6 + 1) > data_end)
+      return XDP_PASS;
+    bpf_printk("ipv6 packet received"); //printing the entire thing is pain, plus we'll have to remove this anyways for benchmarking
+    struct lpm_keyipv6 key6 = {};
+    key6.prefixlen = 128;
+    __builtin_memcpy(key6.ip, ip6->saddr.s6_addr, 16); 
+    return check_block(bpf_map_lookup_elem(&lpm_map_ipv6, &key6));
+  }
+  else //neither ipv4 nor ipv6, pass
+    return XDP_PASS;
 }
+
 
 char LICENSE[] SEC("license") = "GPL";
