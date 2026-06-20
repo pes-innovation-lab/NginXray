@@ -1,12 +1,9 @@
-#include <linux/bpf.h>
-#include <linux/if_ether.h>
-#include <linux/if_packet.h>
-#include <linux/if_vlan.h>
-#include <linux/in.h>
-#include <linux/ip.h>
-#include <linux/ipv6.h>
+#include "vmlinux.h"
 #include <bpf/bpf_endian.h>
 #include <bpf/bpf_helpers.h>
+
+#define ETH_P_IP   0x0800
+#define ETH_P_IPV6 0x86DD
 
 // ip key
 struct lpm_key {
@@ -96,7 +93,7 @@ int filter(struct xdp_md *ctx) {
     bpf_printk("ipv6 packet received"); //printing the entire thing is pain, plus we'll have to remove this anyways for benchmarking
     struct lpm_keyipv6 key6 = {};
     key6.prefixlen = 128;
-    __builtin_memcpy(key6.ip, ip6->saddr.s6_addr, 16); 
+    __builtin_memcpy(key6.ip, ip6->saddr.in6_u.u6_addr8, 16);
     return check_block(bpf_map_lookup_elem(&lpm_map_ipv6, &key6));
   }
   else //neither ipv4 nor ipv6, pass
