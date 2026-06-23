@@ -72,7 +72,7 @@ func main() {
 	for {
 		record, err := rd.Read()
 		if err != nil {
-			log.Println("reading ringbuf %s", err)
+			log.Printf("reading ringbuf %s", err)
 			continue
 		}
 
@@ -80,7 +80,7 @@ func main() {
 
 		err = binary.Read(bytes.NewBuffer(record.RawSample), binary.LittleEndian, &buf)
 		if err != nil {
-			log.Println("copying into ssl buffer %s", err)
+			log.Printf("copying into ssl buffer %s", err)
 			continue
 		}
 
