@@ -43,7 +43,6 @@ struct {
   __type(key, struct lpm_key);
   __type(value, struct block_info);
 } lpm_map SEC(".maps");
-
 struct {
   __uint(type, BPF_MAP_TYPE_LPM_TRIE);
   __uint(max_entries, 1024);
@@ -65,6 +64,13 @@ struct{
     __type(key, __u32);
     __type(value, struct buckets);
 } ratelimit_per_ipv4 SEC(".maps");
+struct{
+    __uint(type, BPF_MAP_TYPE_LRU_HASH);
+    __uint(max_entries, 100000);
+
+    __type(key, __u8[16]);
+    __type(value, struct buckets);
+} ratelimit_per_ipv6 SEC(".maps");
 
 static __always_inline int check_block(struct block_info *blocked, __u64 now) {
   if (!blocked)
@@ -79,7 +85,7 @@ static __always_inline int check_block(struct block_info *blocked, __u64 now) {
   return XDP_DROP;
 } //this common for both ipv4 and ipv6
 
-static __always_inline int check_ratelim(__u32 req_ip, __u64 now) {
+static __always_inline int check_ratelim_ipv4(__u32 req_ip, __u64 now) {
     struct buckets *req_buck = bpf_map_lookup_elem(&ratelimit_per_ipv4, &req_ip);
     // if the bucket doesnt exist -- new ip
     if (!req_buck){
@@ -93,6 +99,56 @@ static __always_inline int check_ratelim(__u32 req_ip, __u64 now) {
         bpf_map_update_elem(
             &ratelimit_per_ipv4,
             &req_ip,
+            &new_bucket,
+            BPF_NOEXIST
+        );
+
+        return XDP_PASS;
+    }
+
+    // time spent and tokens accumulated
+    __u64 elapsed = now - req_buck->last_updated_at;
+    __u64 new_tokens = elapsed / NS_PER_TOKEN;
+
+    // if new tokens was generated
+    if (new_tokens > 0) {
+
+        // update tokens
+        req_buck->tokens += new_tokens;
+
+        // limits max tokens at any instant to BURST value
+        if (req_buck->tokens > BURST)
+            req_buck->tokens = BURST;
+
+        // allows us to retain the remainder
+        req_buck->last_updated_at +=
+            new_tokens * NS_PER_TOKEN;
+    }
+
+    // if no free tokens
+    if (req_buck->tokens == 0)
+        return XDP_DROP;
+
+    // 1 token consumed
+    req_buck ->tokens--;
+
+    return XDP_PASS;
+}
+
+static __always_inline int check_ratelim_ipv6(__u8 req_ip[16], __u64 now) {
+    struct buckets *req_buck = bpf_map_lookup_elem(&ratelimit_per_ipv6, req_ip);
+    // if the bucket doesnt exist -- new ip
+    if (!req_buck){
+        // default bucket values
+        struct buckets new_bucket ={
+            .last_updated_at = now,
+            .tokens = BURST-1,
+        };
+
+        //inserting into map
+        bpf_map_update_elem(
+            &ratelimit_per_ipv6,
+            req_ip,
             &new_bucket,
             BPF_NOEXIST
         );
@@ -160,7 +216,7 @@ int filter(struct xdp_md *ctx) {
         return XDP_DROP;
     }
 
-    return check_ratelim(ip->saddr, now);
+    return check_ratelim_ipv4(ip->saddr, now);
   }
 
   // ipv6
