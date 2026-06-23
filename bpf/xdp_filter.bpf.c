@@ -228,7 +228,13 @@ int filter(struct xdp_md *ctx) {
     struct lpm_keyipv6 key6 = {};
     key6.prefixlen = 128;
     __builtin_memcpy(key6.ip, ip6->saddr.in6_u.u6_addr8, 16);
-    return check_block(bpf_map_lookup_elem(&lpm_map_ipv6, &key6),now);
+
+    int block_status = check_block(bpf_map_lookup_elem(&lpm_map_ipv6, &key6),now);
+    if (block_status == XDP_DROP){
+        return XDP_DROP;
+    }
+
+    return check_ratelim_ipv6(key6.ip, now);
   }
   else //neither ipv4 nor ipv6, pass
     return XDP_PASS;
