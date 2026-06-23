@@ -1,0 +1,6 @@
+package main
+
+const (
+	InterfaceName = "your interface"
+	TestBlockIP   = "ip you wish to block"
+)
