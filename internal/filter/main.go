@@ -1,5 +1,7 @@
 package main
 
+//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang bpf ../../bpf/xdp_filter.bpf.c -- -I../../bpf -D__TARGET_ARCH_x86
+
 import (
 	"encoding/binary"
 	"fmt"
@@ -17,6 +19,10 @@ import (
 	"github.com/cilium/ebpf/rlimit"
 )
 
+const (
+	InterfaceName = "wlan0"           // replace with your interface
+	TestBlockIP   = "192.192.192.192" // IP to block
+)
 
 type LPMKey struct {
 	PrefixLen uint32
@@ -47,6 +53,7 @@ func must(err error) {
 		log.Fatal(err)
 	}
 }
+
 func monotonicNowNS() uint64 {
 	var ts unix.Timespec
 	if err := unix.ClockGettime(unix.CLOCK_MONOTONIC, &ts); err != nil {
@@ -65,7 +72,7 @@ func key6IPString(key LPMKey6) string {
 	return net.IP(key.IP[:]).String()
 }
 
-func AddBlocked(v4, v6*ebpf.Map, cidr string, duration time.Duration, reason uint32) error {
+func AddBlocked(v4, v6 *ebpf.Map, cidr string, duration time.Duration, reason uint32) error {
 	if !strings.Contains(cidr, "/") {
 		if strings.Contains(cidr, ":") {
 			cidr += "/128" // bare IPv6
@@ -95,8 +102,7 @@ func AddBlocked(v4, v6*ebpf.Map, cidr string, duration time.Duration, reason uin
 	return v6.Put(key, value)
 }
 
-
-func cleanupExpired[K any](m *ebpf.Map) { //clean expired entries from the map
+func cleanupExpired[K any](m *ebpf.Map) { // clean expired entries from the map
 	now := monotonicNowNS()
 
 	var (
@@ -134,7 +140,7 @@ func StartGC(v4, v6 *ebpf.Map) {
 	}()
 }
 
-func DumpMap(v4, v6 *ebpf.Map) { //felt cute might delete later (only for testing atm)
+func DumpMap(v4, v6 *ebpf.Map) { // felt cute might delete later (only for testing atm)
 	fmt.Println("printing trie map contents:")
 
 	var k4 LPMKey
@@ -159,7 +165,6 @@ func DumpMap(v4, v6 *ebpf.Map) { //felt cute might delete later (only for testin
 	}
 }
 
-
 func main() {
 	if err := rlimit.RemoveMemlock(); err != nil {
 		log.Fatalf("remove memlock: %v", err)
@@ -171,7 +176,7 @@ func main() {
 	}
 	defer objs.Close()
 
-	const ifaceName = InterfaceName //use ip link and use your interface name here
+	const ifaceName = InterfaceName // use ip link and use your interface name here
 	iface, err := net.InterfaceByName(ifaceName)
 	if err != nil {
 		log.Fatalf("interface %q: %v", ifaceName, err)
@@ -180,7 +185,7 @@ func main() {
 	xdpLink, err := link.AttachXDP(link.XDPOptions{
 		Program:   objs.Filter,
 		Interface: iface.Index,
-		Flags:     link.XDPGenericMode, // works on any interfact includnig wifi 
+		Flags:     link.XDPGenericMode, // works on any interfact includnig wifi
 	})
 	if err != nil {
 		log.Fatalf("attach xdp: %v", err)
@@ -189,9 +194,7 @@ func main() {
 
 	fmt.Println("XDP attached to", iface.Name)
 
-	
-	must(AddBlocked(objs.LpmMap, objs.LpmMapIpv6,TestBlockIP, 5*time.Minute, BLOCK_THREATFEED))
-	
+	must(AddBlocked(objs.LpmMap, objs.LpmMapIpv6, TestBlockIP, 5*time.Minute, BLOCK_THREATFEED))
 
 	DumpMap(objs.LpmMap, objs.LpmMapIpv6)
 	StartGC(objs.LpmMap, objs.LpmMapIpv6)
