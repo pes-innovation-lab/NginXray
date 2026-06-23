@@ -19,10 +19,6 @@ import (
 	"github.com/cilium/ebpf/rlimit"
 )
 
-const (
-	InterfaceName = "wlan0"           // replace with your interface
-	TestBlockIP   = "192.192.192.192" // IP to block
-)
 
 type LPMKey struct {
 	PrefixLen uint32
