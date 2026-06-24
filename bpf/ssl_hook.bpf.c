@@ -61,16 +61,18 @@ int BPF_URETPROBE(ssl_read_exit) {
     if (!bufp)
         return 0;
 
-    int len = PT_REGS_RC(ctx);
-    if (len <= 0) {
+    long ret = PT_REGS_RC(ctx);
+    if (ret <= 0) {
         bpf_map_delete_elem(&bufs, &tid);
         return 0;
     }
 
     // prevent copying beyond buffer size
-    if (len > MAX_BUF_SIZE)
-        len = MAX_BUF_SIZE;
-
+    __u32 len = (__u32)ret;
+    if (len > MAX_BUF_SIZE - 1)
+        len = MAX_BUF_SIZE - 1;
+    len &= (MAX_BUF_SIZE - 1);
+ 
     // use ssl_data struct to reserve space
     struct ssl_buf *e =
         bpf_ringbuf_reserve(&ringbuf, sizeof(struct ssl_buf), 0);
@@ -101,15 +103,17 @@ int BPF_URETPROBE(ssl_write_exit) {
     if (!bufp)
         return 0;
 
-    int len = PT_REGS_RC(ctx);
-    if (len <= 0) {
+    long ret = PT_REGS_RC(ctx);
+    if (ret <= 0) {
         bpf_map_delete_elem(&bufs, &tid);
         return 0;
     }
 
-    if (len > MAX_BUF_SIZE)
-        len = MAX_BUF_SIZE;
-
+    __u32 len = (__u32)ret;
+    if (len > MAX_BUF_SIZE - 1)
+        len = MAX_BUF_SIZE - 1;
+    len &= (MAX_BUF_SIZE - 1);
+ 
     struct ssl_buf *e =
         bpf_ringbuf_reserve(&ringbuf, sizeof(struct ssl_buf), 0);
 
