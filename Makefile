@@ -1,4 +1,4 @@
-.PHONY: all build generate clean filter sniffer run-filter run-sniffer deps fmt help
+.PHONY: all setup vmlinux deps build generate clean filter sniffer run-filter run-sniffer fmt help
 
 FILTER_DIR  := internal/filter
 SNIFFER_DIR := internal/sniffer
@@ -6,7 +6,13 @@ SNIFFER_DIR := internal/sniffer
 FILTER_BIN  := $(FILTER_DIR)/xdp-loader
 SNIFFER_BIN := $(SNIFFER_DIR)/sniffer
 
+BPF_DIR := bpf
+VMLINUX := $(BPF_DIR)/vmlinux.h
+
 all: build
+
+setup: $(VMLINUX) deps
+	@echo "Setup complete, you can now run 'make build'"
 
 generate:
 	@echo "Generating eBPF bytecode (filter)..."
@@ -35,8 +41,22 @@ run-sniffer: sniffer
 
 
 deps:
-	go mod download
-	@echo "Dependencies installed"
+	@echo "Tidying Go dependencies..."
+	go mod tidy
+	@echo "Dependencies ready"
+
+
+# auto-generates only if missing, so a fresh clone bootstraps itself.
+# Needs root to read kernel BTF info
+$(VMLINUX):
+	@echo "vmlinux.h missing — generating from kernel BTF..."
+	sudo bpftool btf dump file /sys/kernel/btf/vmlinux format c > $(VMLINUX)
+	@echo "Wrote $(VMLINUX)"	
+ 
+vmlinux:
+	@echo "Regenerating vmlinux.h from kernel BTF..."
+	sudo bpftool btf dump file /sys/kernel/btf/vmlinux format c > $(VMLINUX)
+	@echo "Wrote $(VMLINUX)"
 
 fmt:
 	go fmt ./...
@@ -54,13 +74,17 @@ help:
 	@echo "NginXray - Makefile"
 	@echo "==================="
 	@echo ""
+	@echo "First time (fresh clone):"
+	@echo "  make setup        - Generate vmlinux.h + tidy Go deps"
+	@echo ""
 	@echo "Build:"
 	@echo "  make build        - Generate eBPF + build both binaries"
 	@echo "  make filter       - Build only the XDP loader"
 	@echo "  make sniffer      - Build only the SSL sniffer"
 	@echo "  make generate     - Run bpf2go codegen in both dirs"
+	@echo "  make vmlinux      - Force-regenerate bpf/vmlinux.h (after kernel change)"
 	@echo "  make clean        - Remove binaries and generated bpf files"
-	@echo "  make deps         - go mod download"
+	@echo "  make deps         - go mod tidy"
 	@echo "  make fmt          - go fmt ./..."
 	@echo ""
 	@echo "Run (requires sudo):"
