@@ -14,29 +14,30 @@ all: build
 setup: $(VMLINUX) deps
 	@echo "Setup complete, you can now run 'make build'"
 
-generate:
+generatefilter:
 	@echo "Generating eBPF bytecode (filter)..."
 	cd $(FILTER_DIR) && go generate
+generatesniffer:
 	@echo "Generating eBPF bytecode (sniffer)..."
 	cd $(SNIFFER_DIR) && go generate
 
 
 build: filter sniffer
 
-filter: generate
+filter: generatefilter
 	@echo "Building XDP loader..."
 	cd $(FILTER_DIR) && go build -buildvcs=false -o xdp-loader
 	@echo "Build complete: ./$(FILTER_BIN)"
 
-sniffer: generate
+sniffer: generatesniffer
 	@echo "Building SSL sniffer..."
 	cd $(SNIFFER_DIR) && go build -buildvcs=false -o sniffer
 	@echo "Build complete: ./$(SNIFFER_BIN)"
 
-run-filter: filter
+run-filter: 
 	sudo ./$(FILTER_BIN)
 
-run-sniffer: sniffer
+run-sniffer: 
 	sudo ./$(SNIFFER_BIN)
 
 
@@ -78,14 +79,15 @@ help:
 	@echo "  make setup        - Generate vmlinux.h + tidy Go deps"
 	@echo ""
 	@echo "Build:"
-	@echo "  make build        - Generate eBPF + build both binaries"
-	@echo "  make filter       - Build only the XDP loader"
-	@echo "  make sniffer      - Build only the SSL sniffer"
-	@echo "  make generate     - Run bpf2go codegen in both dirs"
-	@echo "  make vmlinux      - Force-regenerate bpf/vmlinux.h (after kernel change)"
-	@echo "  make clean        - Remove binaries and generated bpf files"
-	@echo "  make deps         - go mod tidy"
-	@echo "  make fmt          - go fmt ./..."
+	@echo "  make build              - Generate eBPF + build both binaries"
+	@echo "  make filter             - Build only the XDP loader"
+	@echo "  make sniffer            - Build only the SSL sniffer"
+	@echo "  make generatefilter     - Run bpf2go codegen in both dirs"
+	@echo "  make generatesniffer    - Run bpf2go codegen in both dirs"
+	@echo "  make vmlinux            - Force-regenerate bpf/vmlinux.h (after kernel change)"
+	@echo "  make clean              - Remove binaries and generated bpf files"
+	@echo "  make deps               - go mod tidy"
+	@echo "  make fmt                - go fmt ./..."
 	@echo ""
 	@echo "Run (requires sudo):"
 	@echo "  make run-filter   - Build + run the XDP loader as root"
