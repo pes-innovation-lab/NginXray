@@ -14,11 +14,18 @@ import (
 
 // struct for sslbuffer
 type sslbuffer struct {
-	Timens uint64
-	Tid    uint32
-	Pid    uint32
-	Len    uint32
-	Buf    [8192]byte
+	Timens  uint64
+	Tid     uint32
+	Pid     uint32
+	Len     uint32
+	Dir     uint32
+	SSL_ptr uint64
+	Buf     [8192]byte
+}
+
+type rw_buffers struct {
+	request_buffer  bytes.Buffer
+	response_buffer bytes.Buffer
 }
 
 func main() {
