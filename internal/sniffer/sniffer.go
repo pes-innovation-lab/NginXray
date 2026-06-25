@@ -3,6 +3,7 @@ package main
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang bpf ../../bpf/ssl_hook.bpf.c -- -I../../bpf -D__TARGET_ARCH_x86
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/binary"
 	"log"
@@ -85,7 +86,7 @@ func main() {
 			log.Printf("copying into ssl buffer %s", err)
 			continue
 		}
-
+		bufio
 		log.Printf("TIME:%d TID:%d PID:%d LEN:%d \n %s \n", buf.Timens, buf.Pid, buf.Tid, buf.Len, string(buf.Buf[:buf.Len]))
 	}
 }
