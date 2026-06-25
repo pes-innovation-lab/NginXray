@@ -3,7 +3,7 @@
 #include <bpf/bpf_tracing.h>
 #include <bpf/bpf_core_read.h>
 
-#define MAX_BUF_SIZE 8192
+#define MAX_BUF_SIZE 8224
 #define DIR_SEND 0 // send and recv dir for ssl buf
 #define DIR_RECV 1
 
@@ -20,8 +20,8 @@ struct ssl_buf {
 
 // used to pass info from uprobe to uretprobe via the bufs buffer
 struct ssl_state {
-    void *buf;
-    void *ssl;
+    __u64 buf;
+    __u64 ssl;
 };
 
 // to contain pointers to ssl bufs
@@ -47,11 +47,11 @@ int BPF_UPROBE(ssl_read_entry, void *ssl, void *buf, int num) {
     __u32 tid = (__u32)pid_tgid;
 
     // store ssl state in buffer for later use
-    struct ssl_state *s;
-    s->buf = buf;
-    s->ssl = ssl;
+    struct ssl_state s;
+    s.buf = (__u64)buf;
+    s.ssl = (__u64)ssl;
 
-    bpf_map_update_elem(&bufs, &tid, s, BPF_ANY);
+    bpf_map_update_elem(&bufs, &tid, &s, BPF_ANY);
     return 0;
 }
 
@@ -59,10 +59,10 @@ SEC("uprobe/SSL_read_ex")
 int BPF_UPROBE(ssl_readex_entry, void *ssl, void *buf, int num, size_t *read) {
     __u64 pid_tgid = bpf_get_current_pid_tgid();
     __u32 tid = (__u32)pid_tgid;
-    struct ssl_state *s;
-    s->buf = buf;
-    s->ssl = ssl;
-    bpf_map_update_elem(&bufs, &tid, s, BPF_ANY);
+    struct ssl_state s;
+    s.buf = (__u64)buf;
+    s.ssl = (__u64)ssl;
+    bpf_map_update_elem(&bufs, &tid, &s, BPF_ANY);
     return 0;
 }
 
@@ -70,10 +70,10 @@ SEC("uprobe/SSL_write")
 int BPF_UPROBE(ssl_write_entry, void *ssl, void *buf, int num) {
     __u64 pid_tgid = bpf_get_current_pid_tgid();
     __u32 tid = (__u32)pid_tgid;
-    struct ssl_state *s;
-    s->buf = buf;
-    s->ssl = ssl;
-    bpf_map_update_elem(&bufs, &tid, s, BPF_ANY);
+    struct ssl_state s;
+    s.buf = (__u64)buf;
+    s.ssl = (__u64)ssl;
+    bpf_map_update_elem(&bufs, &tid, &s, BPF_ANY);
     return 0;
 }
 
@@ -82,12 +82,13 @@ int BPF_UPROBE(ssl_writeex_entry, void *ssl, void *buf, int num,
                size_t *write) {
     __u64 pid_tgid = bpf_get_current_pid_tgid();
     __u32 tid = (__u32)pid_tgid;
-    struct ssl_state *s;
-    s->buf = buf;
-    s->ssl = ssl;
-    bpf_map_update_elem(&bufs, &tid, s, BPF_ANY);
+    struct ssl_state s;
+    s.buf = (__u64)buf;
+    s.ssl = (__u64)ssl;
+    bpf_map_update_elem(&bufs, &tid, &s, BPF_ANY);
     return 0;
 }
+
 SEC("uretprobe/SSL_read")
 int BPF_URETPROBE(ssl_read_exit) {
     __u64 pid_tgid = bpf_get_current_pid_tgid();
@@ -126,7 +127,7 @@ int BPF_URETPROBE(ssl_read_exit) {
     e->len = len;
     e->dir = DIR_RECV;
     e->ssl_ptr = (__u64)s->ssl;
-    bpf_probe_read_user(e->buf, len, s->buf);
+    bpf_probe_read_user(e->buf, len, (void *)s->buf);
 
     // copy to ringbuffer and delete in hash
     bpf_ringbuf_submit(e, 0);
@@ -168,9 +169,9 @@ int BPF_URETPROBE(ssl_write_exit) {
     e->timens = bpf_ktime_get_ns();
     e->tid = tid;
     e->len = len;
-    e->dir = DIR_RECV;
+    e->dir = DIR_SEND;
     e->ssl_ptr = (__u64)s->ssl;
-    bpf_probe_read_user(e->buf, len, s->buf);
+    bpf_probe_read_user(e->buf, len, (void *)s->buf);
 
     bpf_ringbuf_submit(e, 0);
     bpf_map_delete_elem(&bufs, &tid);
