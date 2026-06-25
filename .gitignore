@@ -10,6 +10,7 @@ setup.bsh
 *_bpfeb.o
 internal/filter/local_config.go
 internal/filter/xdp-loader
+internal/sniffer/sniffer
 *.test
 *.out
 coverage.*
