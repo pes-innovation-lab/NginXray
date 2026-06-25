@@ -14,9 +14,11 @@ import (
 
 // struct for sslbuffer
 type sslbuffer struct {
-	Tid uint32
-	Len uint32
-	Buf [8192]byte
+	Timens uint64
+	Tid    uint32
+	Pid    uint32
+	Len    uint32
+	Buf    [8192]byte
 }
 
 func main() {
@@ -84,6 +86,6 @@ func main() {
 			continue
 		}
 
-		log.Printf("TID:%d LEN:%d \n %s \n", buf.Tid, buf.Len, string(buf.Buf[:buf.Len]))
+		log.Printf("TIME:%d TID:%d PID:%d LEN:%d \n %s \n", buf.Timens, buf.Pid, buf.Tid, buf.Len, string(buf.Buf[:buf.Len]))
 	}
 }

@@ -7,7 +7,9 @@
 
 // each buf read and obtained
 struct ssl_buf {
+    __u64 timens;
     __u32 tid;
+    __u32 pid;
     __u32 len;
     __u8 buf[MAX_BUF_SIZE];
 };
@@ -33,7 +35,7 @@ int BPF_UPROBE(ssl_read_entry, void *ssl, void *buf, int num) {
 
     // tid = the id of the thread which is pid but naming it as tid
     __u32 tid = (__u32)pid_tgid;
-
+    __u32 pid = pid_tgid >> 32;
     // convert into useable pointer
     __u64 bufp = (__u64)buf;
 
@@ -46,7 +48,7 @@ int BPF_UPROBE(ssl_write_entry, void *ssl, void *buf, int num) {
     __u64 pid_tgid = bpf_get_current_pid_tgid();
     __u32 tid = (__u32)pid_tgid;
     __u64 bufp = (__u64)buf;
-
+    __u32 pid = pid_tgid >> 32;
     bpf_map_update_elem(&bufs, &tid, &bufp, BPF_ANY);
     return 0;
 }
@@ -55,6 +57,7 @@ SEC("uretprobe/SSL_read")
 int BPF_URETPROBE(ssl_read_exit) {
     __u64 pid_tgid = bpf_get_current_pid_tgid();
     __u32 tid = (__u32)pid_tgid;
+    __u32 pid = pid_tgid >> 32;
 
     // obtain associated buf pointer
     __u64 *bufp = bpf_map_lookup_elem(&bufs, &tid);
@@ -72,7 +75,7 @@ int BPF_URETPROBE(ssl_read_exit) {
     if (len > MAX_BUF_SIZE - 1)
         len = MAX_BUF_SIZE - 1;
     len &= (MAX_BUF_SIZE - 1);
- 
+
     // use ssl_data struct to reserve space
     struct ssl_buf *e =
         bpf_ringbuf_reserve(&ringbuf, sizeof(struct ssl_buf), 0);
@@ -81,7 +84,8 @@ int BPF_URETPROBE(ssl_read_exit) {
         bpf_map_delete_elem(&bufs, &tid);
         return 0;
     }
-
+    e->timens = bpf_ktime_get_ns();
+    e->pid = pid;
     e->tid = tid;
     e->len = len;
 
@@ -98,6 +102,7 @@ SEC("uretprobe/SSL_write")
 int BPF_URETPROBE(ssl_write_exit) {
     __u64 pid_tgid = bpf_get_current_pid_tgid();
     __u32 tid = (__u32)pid_tgid;
+    __u32 pid = pid_tgid >> 32;
 
     __u64 *bufp = bpf_map_lookup_elem(&bufs, &tid);
     if (!bufp)
@@ -113,7 +118,7 @@ int BPF_URETPROBE(ssl_write_exit) {
     if (len > MAX_BUF_SIZE - 1)
         len = MAX_BUF_SIZE - 1;
     len &= (MAX_BUF_SIZE - 1);
- 
+
     struct ssl_buf *e =
         bpf_ringbuf_reserve(&ringbuf, sizeof(struct ssl_buf), 0);
 
@@ -122,6 +127,8 @@ int BPF_URETPROBE(ssl_write_exit) {
         return 0;
     }
 
+    e->pid = pid;
+    e->timens = bpf_ktime_get_ns();
     e->tid = tid;
     e->len = len;
 
