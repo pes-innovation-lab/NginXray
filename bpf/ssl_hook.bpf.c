@@ -3,7 +3,7 @@
 #include <bpf/bpf_tracing.h>
 #include <bpf/bpf_core_read.h>
 
-#define MAX_BUF_SIZE 8192
+#define MAX_BUF_SIZE 8160
 #define DIR_SEND 0 // send and recv dir for ssl buf
 #define DIR_RECV 1
 
@@ -35,7 +35,7 @@ struct {
 // ring buf to contain actual text
 struct {
     __uint(type, BPF_MAP_TYPE_RINGBUF);
-    __uint(max_entries, 8224 * 128);
+    __uint(max_entries, 8192 * 128);
 } ringbuf SEC(".maps");
 
 SEC("uprobe/SSL_read")
@@ -152,10 +152,10 @@ int BPF_URETPROBE(ssl_write_exit) {
         bpf_map_delete_elem(&bufs, &tid);
         return 0;
     }
-
     __u32 len = (__u32)ret;
-    if (len > MAX_BUF_SIZE - 1)
-        len = MAX_BUF_SIZE - 1;
+
+    if (len > MAX_BUF_SIZE)
+        len = MAX_BUF_SIZE;
     len &= (MAX_BUF_SIZE - 1);
 
     struct ssl_buf *e =
