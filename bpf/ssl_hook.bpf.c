@@ -110,9 +110,8 @@ int BPF_URETPROBE(ssl_read_exit) {
 
     // prevent copying beyond buffer size
     __u32 len = (__u32)ret;
-    if (len > MAX_BUF_SIZE - 1)
-        len = MAX_BUF_SIZE - 1;
-    len &= (MAX_BUF_SIZE - 1);
+    if (len > MAX_BUF_SIZE)
+        len = MAX_BUF_SIZE;
 
     // use ssl_buf struct to reserve space
     struct ssl_buf *e =
@@ -129,7 +128,9 @@ int BPF_URETPROBE(ssl_read_exit) {
     e->dir = DIR_RECV;
     e->ssl_ptr = (__u64)s->ssl;
     bpf_probe_read_user(e->buf, len, (void *)s->buf);
-
+    // for debug purposes
+    bpf_printk("read_exit tid=%u ret=%ld buf_ptr=%llx ssl_ptr=%llx", tid, len,
+               e->buf, e->ssl_ptr);
     // copy to ringbuffer and delete in hash
     bpf_ringbuf_submit(e, 0);
     bpf_map_delete_elem(&bufs, &tid);
@@ -156,7 +157,6 @@ int BPF_URETPROBE(ssl_write_exit) {
 
     if (len > MAX_BUF_SIZE)
         len = MAX_BUF_SIZE;
-    len &= (MAX_BUF_SIZE - 1);
 
     struct ssl_buf *e =
         bpf_ringbuf_reserve(&ringbuf, sizeof(struct ssl_buf), 0);
@@ -173,7 +173,8 @@ int BPF_URETPROBE(ssl_write_exit) {
     e->dir = DIR_SEND;
     e->ssl_ptr = (__u64)s->ssl;
     bpf_probe_read_user(e->buf, len, (void *)s->buf);
-
+    bpf_printk("read_exit tid=%u ret=%ld buf_ptr=%llx ssl_ptr=%llx", tid, len,
+               e->buf, e->ssl_ptr);
     bpf_ringbuf_submit(e, 0);
     bpf_map_delete_elem(&bufs, &tid);
 

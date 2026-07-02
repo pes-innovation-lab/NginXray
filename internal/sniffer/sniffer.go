@@ -3,12 +3,9 @@ package main
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang bpf ../../bpf/ssl_hook.bpf.c -- -I../../bpf -D__TARGET_ARCH_x86
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/binary"
-	"io"
 	"log"
-	"net/http"
 
 	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/ringbuf"
@@ -26,84 +23,10 @@ type sslbuffer struct {
 	Buf     [8160]byte
 }
 
+// per ssl connection buffer
 type connection struct {
-	request_buffer  bytes.Buffer
-	response_buffer bytes.Buffer
-}
-
-func TryParseRequest(buf *bytes.Buffer) (*http.Request, bool, error) {
-	b := buf.Bytes()
-
-	// check for header end
-	headerEnd := bytes.Index(b, []byte("\r\n\r\n"))
-	if headerEnd == -1 {
-		return nil, false, nil
-	}
-
-	// parse the request
-	reader := bufio.NewReader(bytes.NewReader(b))
-	req, err := http.ReadRequest(reader)
-	if err != nil {
-		if err == io.ErrUnexpectedEOF {
-			return nil, false, nil
-		}
-		return nil, false, err
-	}
-
-	// read body
-	body, err := io.ReadAll(req.Body)
-	req.Body.Close()
-	if err == io.ErrUnexpectedEOF {
-		return nil, false, nil
-	}
-	if err != nil {
-		return nil, false, err
-	}
-
-	// replace body ReadAll consumed it
-	req.Body = io.NopCloser(bytes.NewReader(body))
-
-	//  figure out how many bytes were consumed
-	consumed := len(b) - reader.Buffered()
-
-	// remove consumed bytes from the connection buffer
-	buf.Next(consumed)
-
-	return req, true, nil
-}
-
-func TryParseResponse(buf *bytes.Buffer) (*http.Response, bool, error) {
-	b := buf.Bytes()
-
-	headerEnd := bytes.Index(b, []byte("\r\n\r\n"))
-	if headerEnd == -1 {
-		return nil, false, nil
-	}
-
-	reader := bufio.NewReader(bytes.NewReader(b))
-	resp, err := http.ReadResponse(reader, nil)
-	if err != nil {
-		if err == io.ErrUnexpectedEOF {
-			return nil, false, nil
-		}
-		return nil, false, err
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	resp.Body.Close()
-	if err == io.ErrUnexpectedEOF {
-		return nil, false, nil
-	}
-	if err != nil {
-		return nil, false, err
-	}
-
-	resp.Body = io.NopCloser(bytes.NewReader(body))
-
-	consumed := len(b) - reader.Buffered()
-	buf.Next(consumed)
-
-	return resp, true, nil
+	resbuffer bytes.Buffer
+	reqbuffer bytes.Buffer
 }
 
 func main() {
@@ -156,7 +79,7 @@ func main() {
 		log.Fatalf("creating ringbuffer reader %s", err)
 	}
 
-	connections := map[uint64]*connection{}
+	//	connections := make(map[]connection)
 
 	for {
 		record, err := rd.Read()
@@ -172,43 +95,8 @@ func main() {
 			log.Printf("copying into ssl buffer %s", err)
 			continue
 		}
-		log.Printf("TIME:%d TID:%d PID:%d LEN:%d \n %s \n", buf.Timens, buf.Pid, buf.Tid, buf.Len, string(buf.Buf[:buf.Len]))
 
-		conn := connections[buf.SSL_ptr]
-		if conn == nil {
-			conn = &connection{}
-			connections[buf.SSL_ptr] = conn
-		}
-		if buf.Dir == 0 {
-			conn.request_buffer.Write(buf.Buf[:buf.Len])
+		log.Printf("TIME:%d TID:%d PID:%d LEN:%d SSL:%d \n %s \n", buf.Timens, buf.Pid, buf.Tid, buf.Len, buf.SSL_ptr, string(buf.Buf[:buf.Len]))
 
-			for {
-				req, ok, err := TryParseRequest(&conn.request_buffer)
-				if err != nil {
-					log.Println(err)
-					break
-				}
-				if !ok {
-					break
-				}
-
-				log.Printf("%s %s", req.Method, req.URL)
-			}
-		} else {
-			conn.response_buffer.Write(buf.Buf[:buf.Len])
-
-			for {
-				resp, ok, err := TryParseResponse(&conn.response_buffer)
-				if err != nil {
-					log.Println(err)
-					break
-				}
-				if !ok {
-					break
-				}
-
-				log.Printf("%s", resp.Status)
-			}
-		}
 	}
 }
