@@ -110,8 +110,9 @@ int BPF_URETPROBE(ssl_read_exit) {
 
     // prevent copying beyond buffer size
     __u32 len = (__u32)ret;
-    if (len > MAX_BUF_SIZE)
-        len = MAX_BUF_SIZE;
+    if (len > MAX_BUF_SIZE - 1)
+        len = MAX_BUF_SIZE - 1;
+    len &= (MAX_BUF_SIZE - 1);
 
     // use ssl_buf struct to reserve space
     struct ssl_buf *e =
@@ -155,8 +156,9 @@ int BPF_URETPROBE(ssl_write_exit) {
     }
     __u32 len = (__u32)ret;
 
-    if (len > MAX_BUF_SIZE)
-        len = MAX_BUF_SIZE;
+    if (len > MAX_BUF_SIZE - 1)
+        len = MAX_BUF_SIZE - 1;
+    len &= (MAX_BUF_SIZE - 1);
 
     struct ssl_buf *e =
         bpf_ringbuf_reserve(&ringbuf, sizeof(struct ssl_buf), 0);
