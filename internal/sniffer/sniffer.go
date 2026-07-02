@@ -20,12 +20,13 @@ type sslbuffer struct {
 	Len     uint32
 	Dir     uint32
 	SSL_ptr uint64
-	Buf     [8192]byte
+	Buf     [8160]byte
 }
 
-type rw_buffers struct {
-	request_buffer  bytes.Buffer
-	response_buffer bytes.Buffer
+// per ssl connection buffer
+type connection struct {
+	resbuffer bytes.Buffer
+	reqbuffer bytes.Buffer
 }
 
 func main() {
@@ -37,7 +38,7 @@ func main() {
 	// load objects
 	var objs bpfObjects
 	if err := loadBpfObjects(&objs, nil); err != nil {
-		log.Fatalf("loading ebpf objects %s", err)
+		log.Fatalf("loading ebpf  eobjects %s", err)
 	}
 	defer objs.Close()
 
@@ -78,6 +79,8 @@ func main() {
 		log.Fatalf("creating ringbuffer reader %s", err)
 	}
 
+	//	connections := make(map[]connection)
+
 	for {
 		record, err := rd.Read()
 		if err != nil {
@@ -92,6 +95,8 @@ func main() {
 			log.Printf("copying into ssl buffer %s", err)
 			continue
 		}
-		log.Printf("TIME:%d TID:%d PID:%d LEN:%d \n %s \n", buf.Timens, buf.Pid, buf.Tid, buf.Len, string(buf.Buf[:buf.Len]))
+
+		log.Printf("TIME:%d TID:%d PID:%d LEN:%d SSL:%d \n %s \n", buf.Timens, buf.Pid, buf.Tid, buf.Len, buf.SSL_ptr, string(buf.Buf[:buf.Len]))
+
 	}
 }

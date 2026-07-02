@@ -35,10 +35,3 @@ Describe how you tested this:
 
 ---
 
-## Checklist
-
-- [ ] Code follows project style
-- [ ] Commit messages follow [`COMMIT_CONVENTION.md`](https://github.com/acmpesuecc/OpenCMS/blob/main/.github/COMMIT_MESSAGE_CONVENTION.md)
-- [ ] No API keys or sensitive data in code
-
----
