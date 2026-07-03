@@ -359,7 +359,7 @@ func main() {
 		log.Fatalf("creating ringbuffer reader %s", err)
 	}
 
-	connections := map[uint64]*connection{}
+	//	connections := make(map[]connection)
 
 	for {
 		record, err := rd.Read()
