@@ -55,16 +55,17 @@ int BPF_UPROBE(ssl_read_entry, void *ssl, void *buf, int num) {
     return 0;
 }
 // will take care of what this returns later
-SEC("uprobe/SSL_read_ex")
-int BPF_UPROBE(ssl_readex_entry, void *ssl, void *buf, int num, size_t *read) {
-    __u64 pid_tgid = bpf_get_current_pid_tgid();
-    __u32 tid = (__u32)pid_tgid;
-    struct ssl_state s;
-    s.buf = (__u64)buf;
-    s.ssl = (__u64)ssl;
-    bpf_map_update_elem(&bufs, &tid, &s, BPF_ANY);
-    return 0;
-}
+// SEC("uprobe/SSL_read_ex")
+// int BPF_UPROBE(ssl_readex_entry, void *ssl, void *buf, int num, size_t *read)
+// {
+//     __u64 pid_tgid = bpf_get_current_pid_tgid();
+//     __u32 tid = (__u32)pid_tgid;
+//     struct ssl_state s;
+//     s.buf = (__u64)buf;
+//     s.ssl = (__u64)ssl;
+//     bpf_map_update_elem(&bufs, &tid, &s, BPF_ANY);
+//     return 0;
+// }
 
 SEC("uprobe/SSL_write")
 int BPF_UPROBE(ssl_write_entry, void *ssl, void *buf, int num) {
@@ -78,17 +79,17 @@ int BPF_UPROBE(ssl_write_entry, void *ssl, void *buf, int num) {
 }
 
 // will take care of what this returns later part 2
-SEC("uprobe/SSL_write_ex")
-int BPF_UPROBE(ssl_writeex_entry, void *ssl, void *buf, int num,
-               size_t *write) {
-    __u64 pid_tgid = bpf_get_current_pid_tgid();
-    __u32 tid = (__u32)pid_tgid;
-    struct ssl_state s;
-    s.buf = (__u64)buf;
-    s.ssl = (__u64)ssl;
-    bpf_map_update_elem(&bufs, &tid, &s, BPF_ANY);
-    return 0;
-}
+// SEC("uprobe/SSL_write_ex")
+// int BPF_UPROBE(ssl_writeex_entry, void *ssl, void *buf, int num,
+//                size_t *write) {
+//     __u64 pid_tgid = bpf_get_current_pid_tgid();
+//     __u32 tid = (__u32)pid_tgid;
+//     struct ssl_state s;
+//     s.buf = (__u64)buf;
+//     s.ssl = (__u64)ssl;
+//     bpf_map_update_elem(&bufs, &tid, &s, BPF_ANY);
+//     return 0;
+// }
 
 SEC("uretprobe/SSL_read")
 int BPF_URETPROBE(ssl_read_exit) {
