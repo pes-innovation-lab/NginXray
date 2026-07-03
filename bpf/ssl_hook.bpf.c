@@ -102,7 +102,7 @@ int BPF_URETPROBE(ssl_read_exit) {
     if (!s)
         return 0;
 
-    long ret = PT_REGS_RC(ctx);
+    long ret = (int)PT_REGS_RC(ctx);
     if (ret <= 0) {
         bpf_map_delete_elem(&bufs, &tid);
         return 0;
@@ -149,7 +149,7 @@ int BPF_URETPROBE(ssl_write_exit) {
     if (!s)
         return 0;
 
-    long ret = PT_REGS_RC(ctx);
+    long ret = (int)PT_REGS_RC(ctx);
     if (ret <= 0) {
         bpf_map_delete_elem(&bufs, &tid);
         return 0;
