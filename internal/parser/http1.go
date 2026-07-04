@@ -6,6 +6,7 @@ import (
 	"strings"
 )
 
+// structs to contain res/req
 type HTTPRequest struct {
 	Method  string
 	Path    string
@@ -25,6 +26,7 @@ type HTTPResponse struct {
 func ParseRequest(buf *bytes.Buffer) (*HTTPRequest, bool) {
 	data := buf.Bytes()
 
+	// header end signified by CRLF
 	headerEnd := bytes.Index(data, []byte("\r\n\r\n"))
 	if headerEnd == -1 {
 		return nil, false
@@ -41,6 +43,7 @@ func ParseRequest(buf *bytes.Buffer) (*HTTPRequest, bool) {
 		return nil, false
 	}
 
+	// obtain request line info
 	req := &HTTPRequest{
 		Method:  string(parts[0]),
 		Path:    string(parts[1]),
@@ -51,6 +54,7 @@ func ParseRequest(buf *bytes.Buffer) (*HTTPRequest, bool) {
 	contentLength := -1
 	chunked := false
 
+	// map headers and check for chunking or content length
 	for _, line := range lines[1:] {
 		idx := bytes.IndexByte(line, ':')
 		if idx == -1 {
@@ -71,6 +75,7 @@ func ParseRequest(buf *bytes.Buffer) (*HTTPRequest, bool) {
 		}
 	}
 
+	// append body directly if not chunked
 	if !chunked {
 		if contentLength < 0 {
 			contentLength = 0
@@ -89,6 +94,7 @@ func ParseRequest(buf *bytes.Buffer) (*HTTPRequest, bool) {
 	pos := headerEnd + 4
 	var body []byte
 
+	// handle chunking
 	for {
 		if pos >= len(data) {
 			return nil, false
@@ -102,6 +108,7 @@ func ParseRequest(buf *bytes.Buffer) (*HTTPRequest, bool) {
 		sizeLine := string(data[pos : pos+lineEnd])
 		sizeLine = strings.SplitN(sizeLine, ";", 2)[0]
 
+		// obtain chunk size which is in hex
 		var chunkSize int
 		if _, err := fmt.Sscanf(sizeLine, "%x", &chunkSize); err != nil {
 			return nil, false
@@ -109,6 +116,7 @@ func ParseRequest(buf *bytes.Buffer) (*HTTPRequest, bool) {
 
 		pos += lineEnd + 2
 
+		// break if end of chunking
 		if chunkSize == 0 {
 			break
 		}
@@ -128,6 +136,7 @@ func ParseRequest(buf *bytes.Buffer) (*HTTPRequest, bool) {
 		pos += 2
 	}
 
+	// handle trailing headers
 	for {
 		if pos >= len(data) {
 			return nil, false
@@ -146,6 +155,7 @@ func ParseRequest(buf *bytes.Buffer) (*HTTPRequest, bool) {
 		pos += lineEnd + 2
 	}
 
+	// move buffer pointer forward by pos since 1 request is consumed
 	req.Body = body
 	buf.Next(pos)
 
@@ -182,6 +192,7 @@ func ParseResponse(buf *bytes.Buffer) (*HTTPResponse, bool) {
 
 	fmt.Sscanf(string(parts[1]), "%d", &resp.Code)
 
+	// no body for these types of responses
 	if (resp.Code >= 100 && resp.Code < 200) || resp.Code == 204 || resp.Code == 304 {
 		buf.Next(headerEnd + 4)
 		return resp, true
@@ -288,6 +299,7 @@ func ParseResponse(buf *bytes.Buffer) (*HTTPResponse, bool) {
 		return resp, true
 	}
 
+	// handling different types of connections
 	connectionHeader := strings.ToLower(resp.Headers["connection"])
 	isPersistent := false
 	if resp.Version == "HTTP/1.1" {
