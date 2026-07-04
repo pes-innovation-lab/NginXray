@@ -22,7 +22,7 @@ type sslbuffer struct {
 	Len     uint32
 	Dir     uint32
 	SSL_ptr uint64
-	Buf     [8160]byte
+	Buf     [8192]byte
 }
 
 type HTTPRequest struct {
