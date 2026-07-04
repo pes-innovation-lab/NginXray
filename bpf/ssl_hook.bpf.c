@@ -3,7 +3,7 @@
 #include <bpf/bpf_tracing.h>
 #include <bpf/bpf_core_read.h>
 
-#define MAX_BUF_SIZE 8160
+#define MAX_BUF_SIZE 8192
 #define DIR_SEND 0 // send and recv dir for ssl buf
 #define DIR_RECV 1
 

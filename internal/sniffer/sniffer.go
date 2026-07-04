@@ -22,7 +22,7 @@ type sslbuffer struct {
 	Len     uint32
 	Dir     uint32
 	SSL_ptr uint64
-	Buf     [8160]byte
+	Buf     [8192]byte
 }
 
 type HTTPRequest struct {
@@ -133,6 +133,10 @@ func ParseRequest(buf *bytes.Buffer) (*HTTPRequest, bool) {
 
 		pos += lineEnd + 2
 
+		if chunkSize == 0 {
+			break
+		}
+
 		if len(data) < pos+chunkSize+2 {
 			return nil, false
 		}
@@ -146,10 +150,6 @@ func ParseRequest(buf *bytes.Buffer) (*HTTPRequest, bool) {
 		}
 
 		pos += 2
-
-		if chunkSize == 0 {
-			break
-		}
 	}
 
 	for {
@@ -191,17 +191,25 @@ func ParseResponse(buf *bytes.Buffer) (*HTTPResponse, bool) {
 	}
 
 	parts := bytes.SplitN(lines[0], []byte(" "), 3)
-	if len(parts) < 3 {
+	if len(parts) < 2 {
 		return nil, false
 	}
 
 	resp := &HTTPResponse{
 		Version: string(parts[0]),
-		Status:  string(parts[2]),
 		Headers: make(map[string]string),
 	}
 
+	if len(parts) == 3 {
+		resp.Status = string(parts[2])
+	}
+
 	fmt.Sscanf(string(parts[1]), "%d", &resp.Code)
+
+	if (resp.Code >= 100 && resp.Code < 200) || resp.Code == 204 || resp.Code == 304 {
+		buf.Next(headerEnd + 4)
+		return resp, true
+	}
 
 	contentLength := -1
 	chunked := false
@@ -262,6 +270,10 @@ func ParseResponse(buf *bytes.Buffer) (*HTTPResponse, bool) {
 
 			pos += lineEnd + 2
 
+			if chunkSize == 0 {
+				break
+			}
+
 			if len(data) < pos+chunkSize+2 {
 				return nil, false
 			}
@@ -275,9 +287,6 @@ func ParseResponse(buf *bytes.Buffer) (*HTTPResponse, bool) {
 			}
 
 			pos += 2
-			if chunkSize == 0 {
-				break
-			}
 		}
 
 		for {
@@ -300,6 +309,19 @@ func ParseResponse(buf *bytes.Buffer) (*HTTPResponse, bool) {
 
 		resp.Body = body
 		buf.Next(pos)
+		return resp, true
+	}
+
+	connectionHeader := strings.ToLower(resp.Headers["connection"])
+	isPersistent := false
+	if resp.Version == "HTTP/1.1" {
+		isPersistent = connectionHeader != "close"
+	} else if resp.Version == "HTTP/1.0" {
+		isPersistent = connectionHeader == "keep-alive"
+	}
+
+	if isPersistent {
+		buf.Next(headerEnd + 4)
 		return resp, true
 	}
 
@@ -432,4 +454,3 @@ func main() {
 		}
 	}
 }
-
