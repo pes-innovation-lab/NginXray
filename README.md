@@ -1,52 +1,50 @@
 # NginXray
-Kernel-Level Edge Defense & Plaintext L7 Observability: An eBPF-Based Security Agent for Nginx with Go Integration 
+ 
+Kernel-Level Edge Defense and Plaintext L7 Observability: An eBPF-Based Security Agent for Nginx with Go Integration
+ 
 Mentors: Prachi Jha, Murali Krishna Rao
-Interns: Uttam K R, Sarah Kazi, Rehaan Jose Mathew 
-
+Interns: Uttam K R, Sarah Kazi, Rehaan Jose Mathew
+ 
 (temporary)
+ 
 ## Dependencies
-
+ 
 ### Arch Linux
-
+ 
 ```bash
-sudo pacman -S go clang bpftool
+sudo pacman -S go clang bpftool make
 ```
-
+ 
 ### Ubuntu
-
+ 
 ```bash
 sudo apt update
-sudo apt install golang clang bpftool
+sudo apt install golang clang bpftool make
 ```
-
-## Setup
-
-Generate `vmlinux.h`:
-
+ 
+## Usage
+ 
+First time on a fresh clone, run setup once (generates `bpf/vmlinux.h` from your kernel and tidies Go deps):
+ 
 ```bash
-sudo bpftool btf dump file /sys/kernel/btf/vmlinux format c > bpf/vmlinux.h
+make setup
 ```
-
-Install Go dependencies:
-
+ 
+Then build:
+ 
 ```bash
-go mod tidy
+make build
 ```
-
-## Run
-
-### XDP Filter
-
+ 
+Then run a component as root (build first, the run targets do not build for you):
+ 
 ```bash
-cd internal/filter
-go generate
-go run .
+make run-filter
+make run-sniffer
 ```
-
-### SSL Sniffer
-
+ 
+For all available targets:
+ 
 ```bash
-cd internal/sniffer
-go generate
-go run .
+make help
 ```
