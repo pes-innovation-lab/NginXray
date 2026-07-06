@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 
+	masking "nginxray/internal/masking"
 	http1parser "nginxray/internal/parser"
 
 	"github.com/cilium/ebpf/link"
@@ -100,11 +101,14 @@ func main() {
 		}
 		// log.Printf("TIME:%d TID:%d PID:%d LEN:%d \n %s \n", buf.Timens, buf.Pid, buf.Tid, buf.Len, string(buf.Buf[:buf.Len]))
 		//
+
+		// create a connnection if one does not exist
 		conn := connections[buf.SSL_ptr]
 		if conn == nil {
 			conn = &connection{}
 			connections[buf.SSL_ptr] = conn
 		}
+		// check direction and update buffer
 		if buf.Dir == 0 {
 			conn.request_buffer.Write(buf.Buf[:buf.Len])
 
@@ -113,6 +117,9 @@ func main() {
 				if !ok {
 					break
 				}
+
+				// mask req before printing
+				masking.MaskRequest(req)
 
 				fmt.Printf(
 					"pid=%d tid=%d\n%s %s %s\n",
@@ -137,6 +144,7 @@ func main() {
 					break
 				}
 
+				masking.MaskResponse(resp)
 				fmt.Printf(
 					"pid=%d tid=%d\n%s %d %s\n",
 					buf.Pid,
