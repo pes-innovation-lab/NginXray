@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 
+	logger "nginxray/internal/logger"
 	http1parser "nginxray/internal/parser"
 
 	"github.com/cilium/ebpf/link"
@@ -105,6 +106,10 @@ func main() {
 			conn = &connection{}
 			connections[buf.SSL_ptr] = conn
 		}
+
+		// initialize elastic search connection
+		logger.Init()
+
 		if buf.Dir == 0 {
 			conn.request_buffer.Write(buf.Buf[:buf.Len])
 
