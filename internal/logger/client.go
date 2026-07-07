@@ -26,4 +26,3 @@ func Init() {
 
 	log.Printf("Connected to Elasticsearch cluster %q\n", info.ClusterName)
 }
-

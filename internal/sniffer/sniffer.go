@@ -46,6 +46,9 @@ func main() {
 	}
 	defer objs.Close()
 
+	// initialize elastic search connection
+	logger.Init()
+
 	// get ssl executable
 	exec, err := link.OpenExecutable("/usr/lib/libssl.so.3")
 	if err != nil {
@@ -99,17 +102,15 @@ func main() {
 			log.Printf("copying into ssl buffer %s", err)
 			continue
 		}
-		// log.Printf("TIME:%d TID:%d PID:%d LEN:%d \n %s \n", buf.Timens, buf.Pid, buf.Tid, buf.Len, string(buf.Buf[:buf.Len]))
-		//
+
+		// create connection if one dosent exist
 		conn := connections[buf.SSL_ptr]
 		if conn == nil {
 			conn = &connection{}
 			connections[buf.SSL_ptr] = conn
 		}
 
-		// initialize elastic search connection
-		logger.Init()
-
+		// check direction of http message
 		if buf.Dir == 0 {
 			conn.request_buffer.Write(buf.Buf[:buf.Len])
 
@@ -117,6 +118,12 @@ func main() {
 				req, ok := http1parser.ParseRequest(&conn.request_buffer)
 				if !ok {
 					break
+				}
+
+				// log to elasticsearch
+				err := logger.LogRequest(req, buf.Pid, buf.Tid)
+				if err != nil {
+					log.Printf("logging request to elasticsearch: %s", err)
 				}
 
 				fmt.Printf(
@@ -140,6 +147,11 @@ func main() {
 				resp, ok := http1parser.ParseResponse(&conn.response_buffer)
 				if !ok {
 					break
+				}
+
+				err := logger.LogResponse(resp, buf.Pid, buf.Tid)
+				if err != nil {
+					log.Printf("logging request to elasticsearch: %s", err)
 				}
 
 				fmt.Printf(
