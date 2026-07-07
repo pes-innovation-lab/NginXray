@@ -302,11 +302,12 @@ func ParseResponse(buf *bytes.Buffer) (*HTTPResponse, bool) {
 	// handling different types of connections
 	connectionHeader := strings.ToLower(resp.Headers["connection"])
 	isPersistent := false
-	if resp.Version == "HTTP/1.1" {
-		isPersistent = connectionHeader != "close"
-	} else if resp.Version == "HTTP/1.0" {
-		isPersistent = connectionHeader == "keep-alive"
-	}
+	switch resp.Version {
+    case "HTTP/1.1":
+    	isPersistent = connectionHeader != "close"
+	case "HTTP/1.0":
+    	isPersistent = connectionHeader == "keep-alive"
+}
 
 	if isPersistent {
 		buf.Next(headerEnd + 4)
