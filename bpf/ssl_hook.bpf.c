@@ -38,8 +38,19 @@ struct {
     __uint(max_entries, 8192 * 128);
 } ringbuf SEC(".maps");
 
+//Only capture nginx traffic
+static __always_inline int is_target(void) {
+    char comm[16];
+    bpf_get_current_comm(&comm, sizeof(comm));
+    return comm[0] == 'n' && comm[1] == 'g' && comm[2] == 'i' &&
+           comm[3] == 'n' && comm[4] == 'x' && comm[5] == '\0';
+}
+
 SEC("uprobe/SSL_read")
 int BPF_UPROBE(ssl_read_entry, void *ssl, void *buf, int num) {
+    if (!is_target())
+        return 0;
+
     // obtain process id and thread group id
     __u64 pid_tgid = bpf_get_current_pid_tgid();
 
@@ -69,6 +80,9 @@ int BPF_UPROBE(ssl_read_entry, void *ssl, void *buf, int num) {
 
 SEC("uprobe/SSL_write")
 int BPF_UPROBE(ssl_write_entry, void *ssl, void *buf, int num) {
+    if (!is_target())
+        return 0;
+
     __u64 pid_tgid = bpf_get_current_pid_tgid();
     __u32 tid = (__u32)pid_tgid;
     struct ssl_state s;
@@ -176,7 +190,7 @@ int BPF_URETPROBE(ssl_write_exit) {
     e->dir = DIR_SEND;
     e->ssl_ptr = (__u64)s->ssl;
     bpf_probe_read_user(e->buf, len, (void *)s->buf);
-    bpf_printk("read_exit tid=%u ret=%ld buf_ptr=%llx ssl_ptr=%llx", tid, len,
+    bpf_printk("write_exit tid=%u ret=%ld buf_ptr=%llx ssl_ptr=%llx", tid, len,
                e->buf, e->ssl_ptr);
     bpf_ringbuf_submit(e, 0);
     bpf_map_delete_elem(&bufs, &tid);
