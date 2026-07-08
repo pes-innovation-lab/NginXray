@@ -18,10 +18,18 @@ import (
 	"github.com/cilium/ebpf/rlimit"
 )
 
-// connection tracks per-SSL-connection reassembly buffers
+const (
+	dirSend  = 0 
+	dirRecv  = 1 
+	dirClose = 2 
+)
+
 type connection struct {
 	request_buffer  bytes.Buffer
 	response_buffer bytes.Buffer
+	proto           int // http1parser.ProtoUnknown / ProtoHTTP1 / ProtoHTTP2
+	h2              *http1parser.HTTP2Conn
+	h2logged        bool // whether we've already logged this connection's poison
 }
 
 // struct for sslbuffer
@@ -35,6 +43,41 @@ type sslbuffer struct {
 	Buf     [8192]byte
 }
 
+const maxCapturedRead = 8191
+
+func printH2Request(pid, tid uint32, m http1parser.CompletedRequest) {
+	fmt.Printf("pid=%d tid=%d [h2 stream %d]\n%s %s %s\n",
+		pid, tid, m.StreamID, m.Request.Method, m.Request.Path, m.Request.Version)
+	for k, v := range m.Request.Headers {
+		fmt.Printf("%s: %s\n", k, v)
+	}
+	fmt.Printf("\n%s\n", m.Request.Body)
+	if m.BodyTruncated {
+		fmt.Print("[body truncated]\n")
+	}
+	fmt.Print("\n")
+}
+
+func printH2Response(pid, tid uint32, m http1parser.CompletedResponse) {
+	fmt.Printf("pid=%d tid=%d [h2 stream %d]\n%s %d %s\n",
+		pid, tid, m.StreamID, m.Response.Version, m.Response.Code, m.Response.Status)
+	for k, v := range m.Response.Headers {
+		fmt.Printf("%s: %s\n", k, v)
+	}
+	fmt.Printf("\n%s\n", m.Response.Body)
+	if m.BodyTruncated {
+		fmt.Print("[body truncated]\n")
+	}
+	fmt.Print("\n")
+}
+
+// logPoison reports an h2 poison once per connection, so a desynced connection
+func logPoison(conn *connection) {
+	if conn.h2 != nil && conn.h2.Poisoned() && !conn.h2logged {
+		conn.h2logged = true
+		log.Printf("http2: connection poisoned (%s)", conn.h2.PoisonReason())
+	}
+}
 func findLibSSLPath() (string, error) {
 	// common system paths to check first
 	standardPaths := []string{
@@ -87,35 +130,41 @@ func main() {
 	if err != nil {
 		log.Fatalf("finding openssl path :%s", err)
 	}
-	exec, err := link.OpenExecutable(path)
+	libssl, err := link.OpenExecutable(path)
 	if err != nil {
 		log.Fatalf("opening executable %s", err)
 	}
 
 	// get hooks onto the specified symbols
-	readentry, err := exec.Uprobe("SSL_read", objs.SslReadEntry, nil)
+	readentry, err := libssl.Uprobe("SSL_read", objs.SslReadEntry, nil)
 	if err != nil {
 		log.Fatalf("loading sslreadentry %s", err)
 	}
 	defer readentry.Close()
 
-	readexit, err := exec.Uretprobe("SSL_read", objs.SslReadExit, nil)
+	readexit, err := libssl.Uretprobe("SSL_read", objs.SslReadExit, nil)
 	if err != nil {
 		log.Fatalf("loading sslreadexit %s", err)
 	}
 	defer readexit.Close()
 
-	writeentry, err := exec.Uprobe("SSL_write", objs.SslWriteEntry, nil)
+	writeentry, err := libssl.Uprobe("SSL_write", objs.SslWriteEntry, nil)
 	if err != nil {
 		log.Fatalf("loading sslwriteentry %s", err)
 	}
 	defer writeentry.Close()
 
-	writeexit, err := exec.Uretprobe("SSL_write", objs.SslWriteExit, nil)
+	writeexit, err := libssl.Uretprobe("SSL_write", objs.SslWriteExit, nil)
 	if err != nil {
 		log.Fatalf("loading sslwriteexit %s", err)
 	}
 	defer writeexit.Close()
+
+	freeentry, err := libssl.Uprobe("SSL_free", objs.SslFreeEntry, nil)
+	if err != nil {
+		log.Fatalf("loading sslfreeentry %s", err)
+	}
+	defer freeentry.Close()
 
 	// create reader for ringuffer
 	rd, err := ringbuf.NewReader(objs.Ringbuf)
@@ -139,16 +188,71 @@ func main() {
 			log.Printf("copying into ssl buffer %s", err)
 			continue
 		}
-		// log.Printf("TIME:%d TID:%d PID:%d LEN:%d \n %s \n", buf.Timens, buf.Pid, buf.Tid, buf.Len, string(buf.Buf[:buf.Len]))
-		//
+
+
+		if buf.Dir == dirClose {
+			delete(connections, buf.SSL_ptr)
+			continue
+		}
+
 		conn := connections[buf.SSL_ptr]
 		if conn == nil {
 			conn = &connection{}
 			connections[buf.SSL_ptr] = conn
 		}
-		if buf.Dir == 0 {
-			conn.request_buffer.Write(buf.Buf[:buf.Len])
 
+		isReq := buf.Dir == dirRecv
+		data := buf.Buf[:buf.Len]
+
+		if conn.proto == http1parser.ProtoHTTP2 {
+			truncated := buf.Len == maxCapturedRead
+			if isReq {
+				for _, m := range conn.h2.FeedRequest(data, truncated) {
+					printH2Request(buf.Pid, buf.Tid, m)
+				}
+			} else {
+				for _, m := range conn.h2.FeedResponse(data, truncated) {
+					printH2Response(buf.Pid, buf.Tid, m)
+				}
+			}
+			logPoison(conn)
+			continue
+		}
+
+		if isReq {
+			conn.request_buffer.Write(data)
+		} else {
+			conn.response_buffer.Write(data)
+		}
+
+		if conn.proto == http1parser.ProtoUnknown {
+			switch http1parser.DetectProto(conn.request_buffer.Bytes()) {
+			case http1parser.ProtoHTTP2:
+				conn.proto = http1parser.ProtoHTTP2
+				conn.h2 = http1parser.NewHTTP2Conn()
+				rb := conn.request_buffer.Bytes()
+				for _, m := range conn.h2.FeedRequest(rb[http1parser.PrefaceLen:], false) {
+					printH2Request(buf.Pid, buf.Tid, m)
+				}
+				conn.request_buffer.Reset()
+				if conn.response_buffer.Len() > 0 { // drain any early response bytes
+					for _, m := range conn.h2.FeedResponse(conn.response_buffer.Bytes(), false) {
+						printH2Response(buf.Pid, buf.Tid, m)
+					}
+					conn.response_buffer.Reset()
+				}
+				logPoison(conn)
+				continue
+			case http1parser.ProtoHTTP1:
+				conn.proto = http1parser.ProtoHTTP1
+				// fall through to the HTTP/1.1 path below
+			default:
+				continue // not enough bytes yet to decide
+			}
+		}
+
+		// HTTP/1.1 path
+		if isReq {
 			for {
 				req, ok := http1parser.ParseRequest(&conn.request_buffer)
 				if !ok {
@@ -162,7 +266,7 @@ func main() {
 					req.Method,
 					req.Path,
 					req.Version,
-				)
+				)		
 
 				for k, v := range req.Headers {
 					fmt.Printf("%s: %s\n", k, v)
@@ -171,7 +275,6 @@ func main() {
 				fmt.Printf("\n%s\n\n", req.Body)
 			}
 		} else {
-			conn.response_buffer.Write(buf.Buf[:buf.Len])
 			for {
 				resp, ok := http1parser.ParseResponse(&conn.response_buffer)
 				if !ok {

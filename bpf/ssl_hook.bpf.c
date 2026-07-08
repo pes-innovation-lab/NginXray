@@ -4,8 +4,9 @@
 #include <bpf/bpf_core_read.h>
 
 #define MAX_BUF_SIZE 8192
-#define DIR_SEND 0 // send and recv dir for ssl buf
-#define DIR_RECV 1
+#define DIR_SEND  0 
+#define DIR_RECV  1
+#define DIR_CLOSE 2 
 
 // each buf read and obtained
 struct ssl_buf {
@@ -32,14 +33,25 @@ struct {
     __type(value, struct ssl_state);
 } bufs SEC(".maps");
 
-// ring buf to contain actual text
+
 struct {
     __uint(type, BPF_MAP_TYPE_RINGBUF);
     __uint(max_entries, 8192 * 128);
 } ringbuf SEC(".maps");
 
+//Only capture nginx traffic
+static __always_inline int is_target(void) {
+    char comm[16];
+    bpf_get_current_comm(&comm, sizeof(comm));
+    return comm[0] == 'n' && comm[1] == 'g' && comm[2] == 'i' &&
+           comm[3] == 'n' && comm[4] == 'x' && comm[5] == '\0';
+}
+
 SEC("uprobe/SSL_read")
 int BPF_UPROBE(ssl_read_entry, void *ssl, void *buf, int num) {
+    if (!is_target())
+        return 0;
+
     // obtain process id and thread group id
     __u64 pid_tgid = bpf_get_current_pid_tgid();
 
@@ -69,6 +81,9 @@ int BPF_UPROBE(ssl_read_entry, void *ssl, void *buf, int num) {
 
 SEC("uprobe/SSL_write")
 int BPF_UPROBE(ssl_write_entry, void *ssl, void *buf, int num) {
+    if (!is_target())
+        return 0;
+
     __u64 pid_tgid = bpf_get_current_pid_tgid();
     __u32 tid = (__u32)pid_tgid;
     struct ssl_state s;
@@ -90,6 +105,24 @@ int BPF_UPROBE(ssl_write_entry, void *ssl, void *buf, int num) {
 //     bpf_map_update_elem(&bufs, &tid, &s, BPF_ANY);
 //     return 0;
 // }
+SEC("uprobe/SSL_free")
+int BPF_UPROBE(ssl_free_entry, void *ssl) {
+    if (!is_target())
+        return 0;
+
+    struct ssl_buf *e =
+        bpf_ringbuf_reserve(&ringbuf, sizeof(struct ssl_buf), 0);
+    if (!e)
+        return 0;
+    e->timens = bpf_ktime_get_ns();
+    e->pid = bpf_get_current_pid_tgid() >> 32;
+    e->tid = (__u32)bpf_get_current_pid_tgid();
+    e->len = 0;
+    e->dir = DIR_CLOSE;
+    e->ssl_ptr = (__u64)ssl;
+    bpf_ringbuf_submit(e, 0);
+    return 0;
+}
 
 SEC("uretprobe/SSL_read")
 int BPF_URETPROBE(ssl_read_exit) {
@@ -176,7 +209,7 @@ int BPF_URETPROBE(ssl_write_exit) {
     e->dir = DIR_SEND;
     e->ssl_ptr = (__u64)s->ssl;
     bpf_probe_read_user(e->buf, len, (void *)s->buf);
-    bpf_printk("read_exit tid=%u ret=%ld buf_ptr=%llx ssl_ptr=%llx", tid, len,
+    bpf_printk("write_exit tid=%u ret=%ld buf_ptr=%llx ssl_ptr=%llx", tid, len,
                e->buf, e->ssl_ptr);
     bpf_ringbuf_submit(e, 0);
     bpf_map_delete_elem(&bufs, &tid);
