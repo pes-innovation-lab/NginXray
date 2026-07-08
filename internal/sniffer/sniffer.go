@@ -7,6 +7,9 @@ import (
 	"encoding/binary"
 	"fmt"
 	"log"
+	"os"
+	"os/exec"
+	"strings"
 
 	http1parser "nginxray/internal/parser"
 
@@ -71,6 +74,39 @@ func logPoison(conn *connection) {
 		log.Printf("http2: connection poisoned (%s)", conn.h2.PoisonReason())
 	}
 }
+func findLibSSLPath() (string, error) {
+	// common system paths to check first
+	standardPaths := []string{
+		"/usr/lib/x86_64-linux-gnu/libssl.so.3",
+		"/lib/x86_64-linux-gnu/libssl.so.3",
+		"/usr/lib/libssl.so.3",
+		"/usr/lib64/libssl.so.3",
+		"/usr/lib/libssl.so.1.1",
+	}
+
+	for _, path := range standardPaths {
+		if _, err := os.Stat(path); err == nil {
+			return path, nil
+		}
+	}
+
+	// dynamic Fallback
+	cmd := exec.Command("ldconfig", "-p")
+	output, err := cmd.Output()
+	if err == nil {
+		lines := strings.Split(string(output), "\n")
+		for _, line := range lines {
+			if strings.Contains(line, "libssl.so") {
+				parts := strings.Split(line, "=> ")
+				if len(parts) == 2 {
+					return strings.TrimSpace(parts[1]), nil
+				}
+			}
+		}
+	}
+
+	return "", fmt.Errorf("libssl library path not found on this system")
+}
 
 func main() {
 	// only for kernels <5.11
@@ -86,7 +122,11 @@ func main() {
 	defer objs.Close()
 
 	// get ssl executable
-	exec, err := link.OpenExecutable("/usr/lib/libssl.so.3")
+	path, err := findLibSSLPath()
+	if err != nil {
+		log.Fatalf("finding openssl path :%s", err)
+	}
+	exec, err := link.OpenExecutable(path)
 	if err != nil {
 		log.Fatalf("opening executable %s", err)
 	}
