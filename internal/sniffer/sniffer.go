@@ -18,6 +18,11 @@ import (
 	"github.com/cilium/ebpf/rlimit"
 )
 
+const (
+	dirSend  = 0 
+	dirRecv  = 1 
+	dirClose = 2 
+)
 
 type connection struct {
 	request_buffer  bytes.Buffer
@@ -37,7 +42,6 @@ type sslbuffer struct {
 	SSL_ptr uint64
 	Buf     [8192]byte
 }
-
 
 const maxCapturedRead = 8191
 
@@ -126,35 +130,41 @@ func main() {
 	if err != nil {
 		log.Fatalf("finding openssl path :%s", err)
 	}
-	exec, err := link.OpenExecutable(path)
+	libssl, err := link.OpenExecutable(path)
 	if err != nil {
 		log.Fatalf("opening executable %s", err)
 	}
 
 	// get hooks onto the specified symbols
-	readentry, err := exec.Uprobe("SSL_read", objs.SslReadEntry, nil)
+	readentry, err := libssl.Uprobe("SSL_read", objs.SslReadEntry, nil)
 	if err != nil {
 		log.Fatalf("loading sslreadentry %s", err)
 	}
 	defer readentry.Close()
 
-	readexit, err := exec.Uretprobe("SSL_read", objs.SslReadExit, nil)
+	readexit, err := libssl.Uretprobe("SSL_read", objs.SslReadExit, nil)
 	if err != nil {
 		log.Fatalf("loading sslreadexit %s", err)
 	}
 	defer readexit.Close()
 
-	writeentry, err := exec.Uprobe("SSL_write", objs.SslWriteEntry, nil)
+	writeentry, err := libssl.Uprobe("SSL_write", objs.SslWriteEntry, nil)
 	if err != nil {
 		log.Fatalf("loading sslwriteentry %s", err)
 	}
 	defer writeentry.Close()
 
-	writeexit, err := exec.Uretprobe("SSL_write", objs.SslWriteExit, nil)
+	writeexit, err := libssl.Uretprobe("SSL_write", objs.SslWriteExit, nil)
 	if err != nil {
 		log.Fatalf("loading sslwriteexit %s", err)
 	}
 	defer writeexit.Close()
+
+	freeentry, err := libssl.Uprobe("SSL_free", objs.SslFreeEntry, nil)
+	if err != nil {
+		log.Fatalf("loading sslfreeentry %s", err)
+	}
+	defer freeentry.Close()
 
 	// create reader for ringuffer
 	rd, err := ringbuf.NewReader(objs.Ringbuf)
@@ -179,17 +189,21 @@ func main() {
 			continue
 		}
 
+
+		if buf.Dir == dirClose {
+			delete(connections, buf.SSL_ptr)
+			continue
+		}
+
 		conn := connections[buf.SSL_ptr]
 		if conn == nil {
 			conn = &connection{}
 			connections[buf.SSL_ptr] = conn
 		}
 
-
-		isReq := buf.Dir == 1
+		isReq := buf.Dir == dirRecv
 		data := buf.Buf[:buf.Len]
 
-		
 		if conn.proto == http1parser.ProtoHTTP2 {
 			truncated := buf.Len == maxCapturedRead
 			if isReq {
@@ -205,7 +219,6 @@ func main() {
 			continue
 		}
 
-		
 		if isReq {
 			conn.request_buffer.Write(data)
 		} else {
@@ -238,7 +251,7 @@ func main() {
 			}
 		}
 
-		// HTTP/1.1 path 
+		// HTTP/1.1 path
 		if isReq {
 			for {
 				req, ok := http1parser.ParseRequest(&conn.request_buffer)
@@ -253,7 +266,7 @@ func main() {
 					req.Method,
 					req.Path,
 					req.Version,
-				)
+				)		
 
 				for k, v := range req.Headers {
 					fmt.Printf("%s: %s\n", k, v)

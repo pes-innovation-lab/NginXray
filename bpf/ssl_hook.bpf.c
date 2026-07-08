@@ -4,8 +4,9 @@
 #include <bpf/bpf_core_read.h>
 
 #define MAX_BUF_SIZE 8192
-#define DIR_SEND 0 // send and recv dir for ssl buf
-#define DIR_RECV 1
+#define DIR_SEND  0 
+#define DIR_RECV  1
+#define DIR_CLOSE 2 
 
 // each buf read and obtained
 struct ssl_buf {
@@ -32,7 +33,7 @@ struct {
     __type(value, struct ssl_state);
 } bufs SEC(".maps");
 
-// ring buf to contain actual text
+
 struct {
     __uint(type, BPF_MAP_TYPE_RINGBUF);
     __uint(max_entries, 8192 * 128);
@@ -104,6 +105,24 @@ int BPF_UPROBE(ssl_write_entry, void *ssl, void *buf, int num) {
 //     bpf_map_update_elem(&bufs, &tid, &s, BPF_ANY);
 //     return 0;
 // }
+SEC("uprobe/SSL_free")
+int BPF_UPROBE(ssl_free_entry, void *ssl) {
+    if (!is_target())
+        return 0;
+
+    struct ssl_buf *e =
+        bpf_ringbuf_reserve(&ringbuf, sizeof(struct ssl_buf), 0);
+    if (!e)
+        return 0;
+    e->timens = bpf_ktime_get_ns();
+    e->pid = bpf_get_current_pid_tgid() >> 32;
+    e->tid = (__u32)bpf_get_current_pid_tgid();
+    e->len = 0;
+    e->dir = DIR_CLOSE;
+    e->ssl_ptr = (__u64)ssl;
+    bpf_ringbuf_submit(e, 0);
+    return 0;
+}
 
 SEC("uretprobe/SSL_read")
 int BPF_URETPROBE(ssl_read_exit) {
