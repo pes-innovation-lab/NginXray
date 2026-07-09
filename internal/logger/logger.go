@@ -15,6 +15,12 @@ type HTTPEvent struct {
 
 	Direction string `json:"direction"`
 
+	Client_ip   uint32 `json:"clientIP"`
+	Client_port uint16 `json:"clientPort"`
+
+	Server_ip   uint32 `json:"serverIP"`
+	Server_port uint16 `json:"serverPort"`
+
 	Method string `json:"method,omitempty"`
 	Path   string `json:"path,omitempty"`
 
@@ -37,12 +43,17 @@ func Log(event HTTPEvent) error {
 }
 
 // convert resp and req to http event
-func LogRequest(req *http1parser.HTTPRequest, pid, tid uint32) error {
+func LogRequest(req *http1parser.HTTPRequest, pid, tid, client_ip uint32, client_port uint16, server_ip uint32, server_port uint16) error {
 	event := HTTPEvent{
 		Timestamp: time.Now().Format(time.RFC3339),
 
 		PID: pid,
 		TID: tid,
+
+		Client_ip:   client_ip,
+		Client_port: client_port,
+		Server_ip:   server_ip,
+		Server_port: server_port,
 
 		Direction: "request",
 
@@ -57,12 +68,17 @@ func LogRequest(req *http1parser.HTTPRequest, pid, tid uint32) error {
 	return Log(event)
 }
 
-func LogResponse(resp *http1parser.HTTPResponse, pid, tid uint32) error {
+func LogResponse(resp *http1parser.HTTPResponse, pid, tid, client_ip uint32, client_port uint16, server_ip uint32, server_port uint16) error {
 	event := HTTPEvent{
 		Timestamp: time.Now().Format(time.RFC3339),
 
 		PID: pid,
 		TID: tid,
+
+		Client_ip:   client_ip,
+		Client_port: client_port,
+		Server_ip:   server_ip,
+		Server_port: server_port,
 
 		Direction: "response",
 

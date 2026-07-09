@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"os/exec"
 	"strings"
@@ -33,15 +34,29 @@ type connection struct {
 	h2logged        bool // whether we've already logged this connection's poison
 }
 
-// struct for sslbuffer
 type sslbuffer struct {
-	Timens  uint64
-	Tid     uint32
-	Pid     uint32
-	Len     uint32
-	Dir     uint32
-	SSL_ptr uint64
-	Buf     [8192]byte
+	Timens      uint64
+	Tid         uint32
+	Pid         uint32
+	Len         uint32
+	Dir         uint32
+	SSL_ptr     uint64
+	Client_ip   uint32
+	Client_port uint16
+	_           uint16
+	Server_ip   uint32
+	Server_port uint16
+	Buf         [8192]byte
+}
+
+// only for temporary logging to terminal
+func ipStr(raw uint32) string {
+	return net.IP{
+		byte(raw),
+		byte(raw >> 8),
+		byte(raw >> 16),
+		byte(raw >> 24),
+	}.String()
 }
 
 const maxCapturedRead = 8191
@@ -171,6 +186,41 @@ func main() {
 	}
 	defer freeentry.Close()
 
+	inetAcceptExit, err := link.Kretprobe(
+		"inet_csk_accept",
+		objs.InetCskAcceptExit,
+		nil,
+	)
+	if err != nil {
+		log.Fatalf("attach inet_csk_accept: %v", err)
+	}
+	defer inetAcceptExit.Close()
+
+	acceptExit, err := link.Kretprobe(
+		"__x64_sys_accept",
+		objs.AcceptExit,
+		nil,
+	)
+	if err != nil {
+		log.Fatalf("attach accept_exit: %v", err)
+	}
+	defer acceptExit.Close()
+
+	accept4Exit, err := link.Kretprobe(
+		"__x64_sys_accept4",
+		objs.Accept4Exit,
+		nil,
+	)
+	if err != nil {
+		log.Fatalf("attach accept4_exit: %v", err)
+	}
+	defer accept4Exit.Close()
+	setfd, err := libssl.Uprobe("SSL_set_fd", objs.SslSetFd, nil)
+	if err != nil {
+		log.Fatalf("loading ssl_set_fd: %v", err)
+	}
+	defer setfd.Close()
+
 	// create reader for ringuffer
 	rd, err := ringbuf.NewReader(objs.Ringbuf)
 	if err != nil {
@@ -264,18 +314,22 @@ func main() {
 				}
 
 				// log to elasticsearch
-				err := logger.LogRequest(req, buf.Pid, buf.Tid)
+				err := logger.LogRequest(req, buf.Pid, buf.Tid, buf.Client_ip, buf.Client_port, buf.Server_ip, buf.Server_port)
 				if err != nil {
 					log.Printf("logging request to elasticsearch: %s", err)
 				}
 
 				fmt.Printf(
-					"pid=%d tid=%d\n%s %s %s\n",
+					"pid=%d tid=%d\n%s %s %s\nclient=%s:%d server=%s:%d\n",
 					buf.Pid,
 					buf.Tid,
 					req.Method,
 					req.Path,
 					req.Version,
+					ipStr(buf.Client_ip),
+					buf.Client_port,
+					ipStr(buf.Server_ip),
+					buf.Server_port,
 				)
 
 				for k, v := range req.Headers {
@@ -291,18 +345,22 @@ func main() {
 					break
 				}
 
-				err := logger.LogResponse(resp, buf.Pid, buf.Tid)
+				err := logger.LogResponse(resp, buf.Pid, buf.Tid, buf.Client_ip, buf.Client_port, buf.Server_ip, buf.Server_port)
 				if err != nil {
 					log.Printf("logging request to elasticsearch: %s", err)
 				}
 
 				fmt.Printf(
-					"pid=%d tid=%d\n%s %d %s\n",
+					"pid=%d tid=%d\n%s %d %s\nclient=%s:%d server=%s:%d\n",
 					buf.Pid,
 					buf.Tid,
 					resp.Version,
 					resp.Code,
 					resp.Status,
+					ipStr(buf.Client_ip),
+					buf.Client_port,
+					ipStr(buf.Server_ip),
+					buf.Server_port,
 				)
 
 				for k, v := range resp.Headers {
