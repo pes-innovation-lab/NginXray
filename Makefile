@@ -48,22 +48,22 @@ deps:
 
 docker-up:
 	@echo "Starting Elasticsearch and Kibana..."
-	docker compose up -d
+	sudo docker compose up -d
 
 docker-down:
 	@echo "Stopping Elasticsearch and Kibana..."
-	docker compose down
+	sudo docker compose down
 
 docker-restart:
 	@echo "Restarting Elasticsearch and Kibana..."
-	docker compose down
-	docker compose up -d
+	sudo docker compose down
+	sudo docker compose up -d
 
 docker-logs:
-	docker compose logs -f
+	sudo docker compose logs -f
 
 docker-ps:
-	docker compose ps
+	sudo docker compose ps
 
 # auto-generates only if missing, so a fresh clone bootstraps itself.
 # Needs root to read kernel BTF info
