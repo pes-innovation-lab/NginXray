@@ -1,4 +1,4 @@
-.PHONY: all setup vmlinux deps build generate clean filter sniffer run-filter run-sniffer fmt help
+.PHONY: all setup vmlinux deps build generate clean filter sniffer run-filter run-sniffer fmt help docker-up docker-down docker-restart docker-logs docker-ps
 
 FILTER_DIR  := internal/filter
 SNIFFER_DIR := internal/sniffer
@@ -46,6 +46,24 @@ deps:
 	go mod tidy
 	@echo "Dependencies ready"
 
+docker-up:
+	@echo "Starting Elasticsearch and Kibana..."
+	docker compose up -d
+
+docker-down:
+	@echo "Stopping Elasticsearch and Kibana..."
+	docker compose down
+
+docker-restart:
+	@echo "Restarting Elasticsearch and Kibana..."
+	docker compose down
+	docker compose up -d
+
+docker-logs:
+	docker compose logs -f
+
+docker-ps:
+	docker compose ps
 
 # auto-generates only if missing, so a fresh clone bootstraps itself.
 # Needs root to read kernel BTF info
@@ -88,6 +106,13 @@ help:
 	@echo "  make clean              - Remove binaries and generated bpf files"
 	@echo "  make deps               - go mod tidy"
 	@echo "  make fmt                - go fmt ./..."
+	@echo ""
+	@echo "Docker:"
+	@echo "  make docker-up        - Start Elasticsearch and Kibana"
+	@echo "  make docker-down      - Stop and remove containers"
+	@echo "  make docker-restart   - Restart the Docker services"
+	@echo "  make docker-logs      - Follow container logs"
+	@echo "  make docker-ps        - Show running containers"
 	@echo ""
 	@echo "Run (requires sudo):"
 	@echo "  make run-filter   - Build + run the XDP loader as root"
