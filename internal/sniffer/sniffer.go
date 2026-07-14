@@ -61,9 +61,10 @@ func ipStr(raw uint32) string {
 
 const maxCapturedRead = 8191
 
-func printH2Request(pid, tid uint32, m http1parser.CompletedRequest) {
-	fmt.Printf("pid=%d tid=%d [h2 stream %d]\n%s %s %s\n",
-		pid, tid, m.StreamID, m.Request.Method, m.Request.Path, m.Request.Version)
+func printH2Request(pid, tid uint32, clientIP uint32, clientPort uint16, serverIP uint32, serverPort uint16, m http1parser.CompletedRequest) {
+	fmt.Printf("pid=%d tid=%d [h2 stream %d]\n%s %s %s\nclient=%s:%d server=%s:%d\n",
+		pid, tid, m.StreamID, m.Request.Method, m.Request.Path, m.Request.Version,
+		ipStr(clientIP), clientPort, ipStr(serverIP), serverPort)
 	for k, v := range m.Request.Headers {
 		fmt.Printf("%s: %s\n", k, v)
 	}
@@ -74,9 +75,10 @@ func printH2Request(pid, tid uint32, m http1parser.CompletedRequest) {
 	fmt.Print("\n")
 }
 
-func printH2Response(pid, tid uint32, m http1parser.CompletedResponse) {
-	fmt.Printf("pid=%d tid=%d [h2 stream %d]\n%s %d %s\n",
-		pid, tid, m.StreamID, m.Response.Version, m.Response.Code, m.Response.Status)
+func printH2Response(pid, tid uint32, clientIP uint32, clientPort uint16, serverIP uint32, serverPort uint16, m http1parser.CompletedResponse) {
+	fmt.Printf("pid=%d tid=%d [h2 stream %d]\n%s %d %s\nclient=%s:%d server=%s:%d\n",
+		pid, tid, m.StreamID, m.Response.Version, m.Response.Code, m.Response.Status,
+		ipStr(clientIP), clientPort, ipStr(serverIP), serverPort)
 	for k, v := range m.Response.Headers {
 		fmt.Printf("%s: %s\n", k, v)
 	}
@@ -262,11 +264,17 @@ func main() {
 			truncated := buf.Len == maxCapturedRead
 			if isReq {
 				for _, m := range conn.h2.FeedRequest(data, truncated) {
-					printH2Request(buf.Pid, buf.Tid, m)
+					if err := logger.LogRequest(m.Request, buf.Pid, buf.Tid, buf.Client_ip, buf.Client_port, buf.Server_ip, buf.Server_port); err != nil {
+						log.Printf("logging h2 request to elasticsearch: %s", err)
+					}
+					printH2Request(buf.Pid, buf.Tid, buf.Client_ip, buf.Client_port, buf.Server_ip, buf.Server_port, m)
 				}
 			} else {
 				for _, m := range conn.h2.FeedResponse(data, truncated) {
-					printH2Response(buf.Pid, buf.Tid, m)
+					if err := logger.LogResponse(m.Response, buf.Pid, buf.Tid, buf.Client_ip, buf.Client_port, buf.Server_ip, buf.Server_port); err != nil {
+						log.Printf("logging h2 response to elasticsearch: %s", err)
+					}
+					printH2Response(buf.Pid, buf.Tid, buf.Client_ip, buf.Client_port, buf.Server_ip, buf.Server_port, m)
 				}
 			}
 			logPoison(conn)
@@ -286,12 +294,18 @@ func main() {
 				conn.h2 = http1parser.NewHTTP2Conn()
 				rb := conn.request_buffer.Bytes()
 				for _, m := range conn.h2.FeedRequest(rb[http1parser.PrefaceLen:], false) {
-					printH2Request(buf.Pid, buf.Tid, m)
+					if err := logger.LogRequest(m.Request, buf.Pid, buf.Tid, buf.Client_ip, buf.Client_port, buf.Server_ip, buf.Server_port); err != nil {
+						log.Printf("logging h2 request to elasticsearch: %s", err)
+					}
+					printH2Request(buf.Pid, buf.Tid, buf.Client_ip, buf.Client_port, buf.Server_ip, buf.Server_port, m)
 				}
 				conn.request_buffer.Reset()
 				if conn.response_buffer.Len() > 0 { // drain any early response bytes
 					for _, m := range conn.h2.FeedResponse(conn.response_buffer.Bytes(), false) {
-						printH2Response(buf.Pid, buf.Tid, m)
+						if err := logger.LogResponse(m.Response, buf.Pid, buf.Tid, buf.Client_ip, buf.Client_port, buf.Server_ip, buf.Server_port); err != nil {
+							log.Printf("logging h2 response to elasticsearch: %s", err)
+						}
+						printH2Response(buf.Pid, buf.Tid, buf.Client_ip, buf.Client_port, buf.Server_ip, buf.Server_port, m)
 					}
 					conn.response_buffer.Reset()
 				}
