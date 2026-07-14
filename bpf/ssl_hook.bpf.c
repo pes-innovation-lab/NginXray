@@ -9,7 +9,9 @@
 #define DIR_RECV 1
 #define DIR_CLOSE 2
 
-// buffer containing information that will be pushed to ringbuffer
+#define AF_INET_ 2
+#define AF_INET6_ 10
+
 struct ssl_buf {
     __u64 timens;
     __u32 tid;
@@ -17,24 +19,27 @@ struct ssl_buf {
     __u32 len;
     __u32 dir;
     __u64 ssl_ptr;
-    __u32 client_ip;
+    __u16 family;
     __u16 client_port;
-    __u32 server_ip;
     __u16 server_port;
+    __u8 client_ip[16];
+    __u8 server_ip[16];
     __u8 buf[MAX_BUF_SIZE];
 };
+
 // used to pass info from uprobe to uretprobe via the bufs buffer
 struct ssl_state {
     __u64 buf;
     __u64 ssl;
 };
 
-// for client/server ip and port to be in ssl_buf
+
 struct conn_info {
-    __u32 client_ip;
+    __u16 family;
     __u16 client_port;
-    __u32 server_ip;
     __u16 server_port;
+    __u8 client_ip[16];
+    __u8 server_ip[16];
 };
 
 struct {
@@ -131,11 +136,19 @@ int BPF_UPROBE(ssl_free_entry, void *ssl) {
     e->len = 0;
     e->dir = DIR_CLOSE;
     e->ssl_ptr = (__u64)ssl;
+    e->family = 0;
+    e->client_port = 0;
+    e->server_port = 0;
+    __builtin_memset(e->client_ip, 0, sizeof(e->client_ip));
+    __builtin_memset(e->server_ip, 0, sizeof(e->server_ip));
     bpf_ringbuf_submit(e, 0);
+
+    __u64 ssl_key = (__u64)ssl;
+    bpf_map_delete_elem(&ssl_to_conn, &ssl_key);
     return 0;
 }
 
-// exit probes to obtain plaintext from hash buffer along with connection info`
+// exit probes to obtain plaintext from hash buffer along with connection info
 SEC("uretprobe/SSL_read")
 int BPF_URETPROBE(ssl_read_exit) {
     __u64 pid_tgid = bpf_get_current_pid_tgid();
@@ -179,16 +192,17 @@ int BPF_URETPROBE(ssl_read_exit) {
     // obtain connection info
     struct conn_info *c = bpf_map_lookup_elem(&ssl_to_conn, &e->ssl_ptr);
     if (c) {
-        e->client_ip = c->client_ip;
+        e->family = c->family;
         e->client_port = bpf_ntohs(c->client_port);
-        e->server_ip = c->server_ip;
         e->server_port = bpf_ntohs(c->server_port);
+        __builtin_memcpy(e->client_ip, c->client_ip, 16);
+        __builtin_memcpy(e->server_ip, c->server_ip, 16);
     } else {
-
-        e->client_ip = 0;
+        e->family = 0;
         e->client_port = 0;
-        e->server_ip = 0;
         e->server_port = 0;
+        __builtin_memset(e->client_ip, 0, 16);
+        __builtin_memset(e->server_ip, 0, 16);
     }
 
     // submit to ringbuffer and delete in hash
@@ -235,15 +249,17 @@ int BPF_URETPROBE(ssl_write_exit) {
 
     struct conn_info *c = bpf_map_lookup_elem(&ssl_to_conn, &e->ssl_ptr);
     if (c) {
-        e->client_ip = c->client_ip;
+        e->family = c->family;
         e->client_port = bpf_ntohs(c->client_port);
-        e->server_ip = c->server_ip;
         e->server_port = bpf_ntohs(c->server_port);
+        __builtin_memcpy(e->client_ip, c->client_ip, 16);
+        __builtin_memcpy(e->server_ip, c->server_ip, 16);
     } else {
-        e->client_ip = 0;
+        e->family = 0;
         e->client_port = 0;
-        e->server_ip = 0;
         e->server_port = 0;
+        __builtin_memset(e->client_ip, 0, 16);
+        __builtin_memset(e->server_ip, 0, 16);
     }
 
     bpf_ringbuf_submit(e, 0);
@@ -263,18 +279,25 @@ int BPF_KRETPROBE(inet_csk_accept_exit, struct sock *sk) {
 
     __u32 tid = (__u32)bpf_get_current_pid_tgid();
 
-    // use CORE macro to read from socket
     struct conn_info conn = {};
-    conn.client_ip = BPF_CORE_READ(sk, __sk_common.skc_daddr);
+    __u16 family = BPF_CORE_READ(sk, __sk_common.skc_family);
+    conn.family = family;
+
+    if (family == AF_INET6_) {
+        BPF_CORE_READ_INTO(&conn.client_ip, sk, __sk_common.skc_v6_daddr);
+        BPF_CORE_READ_INTO(&conn.server_ip, sk, __sk_common.skc_v6_rcv_saddr);
+    } else {
+        __u32 daddr = BPF_CORE_READ(sk, __sk_common.skc_daddr);
+        __u32 saddr = BPF_CORE_READ(sk, __sk_common.skc_rcv_saddr);
+        __builtin_memcpy(conn.client_ip, &daddr, sizeof(daddr));
+        __builtin_memcpy(conn.server_ip, &saddr, sizeof(saddr));
+    }
+
     conn.client_port = BPF_CORE_READ(sk, __sk_common.skc_dport);
-    conn.server_ip = BPF_CORE_READ(sk, __sk_common.skc_rcv_saddr);
     __u16 lport = BPF_CORE_READ(sk, __sk_common.skc_num);
     conn.server_port = bpf_htons(lport);
 
     bpf_map_update_elem(&tid_to_conn, &tid, &conn, BPF_ANY);
-    bpf_printk("inet_csk_accept client=%x:%u server=%x:%u",
-               bpf_ntohl(conn.client_ip), bpf_ntohs(conn.client_port),
-               bpf_ntohl(conn.server_ip), lport);
     return 0;
 }
 
