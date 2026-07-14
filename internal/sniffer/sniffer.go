@@ -299,9 +299,11 @@ func main() {
 				conn.proto = http1parser.ProtoHTTP2
 				conn.h2 = http1parser.NewHTTP2Conn()
 				rb := conn.request_buffer.Bytes()
-				for _, m := range conn.h2.FeedRequest(rb[http1parser.PrefaceLen:], false) {
-					logger.LogRequest(m.Request, buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port)
-					printH2Request(buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port, m)
+				if len(rb) >= http1parser.PrefaceLen {
+					for _, m := range conn.h2.FeedRequest(rb[http1parser.PrefaceLen:], false) {
+						logger.LogRequest(m.Request, buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port)
+						printH2Request(buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port, m)
+					}
 				}
 				conn.request_buffer.Reset()
 				if conn.response_buffer.Len() > 0 { // drain any early response bytes
