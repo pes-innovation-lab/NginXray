@@ -2,6 +2,7 @@ package logging
 
 import (
 	"context"
+	"log"
 	"time"
 
 	http1parser "nginxray/internal/parser"
@@ -15,11 +16,11 @@ type HTTPEvent struct {
 
 	Direction string `json:"direction"`
 
-	Client_ip   uint32 `json:"clientIP"`
-	Client_port uint16 `json:"clientPort"`
+	ClientIP   string `json:"clientIP"`
+	ClientPort uint16 `json:"clientPort"`
 
-	Server_ip   uint32 `json:"serverIP"`
-	Server_port uint16 `json:"serverPort"`
+	ServerIP   string `json:"serverIP"`
+	ServerPort uint16 `json:"serverPort"`
 
 	Method string `json:"method,omitempty"`
 	Path   string `json:"path,omitempty"`
@@ -33,27 +34,55 @@ type HTTPEvent struct {
 	Body string `json:"body"`
 }
 
-// index http event as elasticsearch document
-func Log(event HTTPEvent) error {
+var eventQueue = make(chan HTTPEvent, 4096)
+
+func startWorker() {
+	go func() {
+		for ev := range eventQueue {
+			if err := indexEvent(ev); err != nil {
+				log.Printf("logging to elasticsearch: %s", err)
+			}
+		}
+	}()
+}
+
+func indexEvent(event HTTPEvent) error {
+	if Client == nil {
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
 	_, err := Client.Index("nginxray-http").
 		Document(event).
-		Do(context.Background())
+		Do(ctx)
 
 	return err
 }
 
-// convert resp and req to http event
-func LogRequest(req *http1parser.HTTPRequest, pid, tid, client_ip uint32, client_port uint16, server_ip uint32, server_port uint16) error {
-	event := HTTPEvent{
+func enqueue(event HTTPEvent) {
+	if Client == nil {
+		return // logging disabled, drop silently
+	}
+	select {
+	case eventQueue <- event:
+	default:
+		log.Printf("warning: elasticsearch queue full, dropping %s event", event.Direction)
+	}
+}
+
+func LogRequest(req *http1parser.HTTPRequest, pid, tid uint32, clientIP string, clientPort uint16, serverIP string, serverPort uint16) {
+	enqueue(HTTPEvent{
 		Timestamp: time.Now().Format(time.RFC3339),
 
 		PID: pid,
 		TID: tid,
 
-		Client_ip:   client_ip,
-		Client_port: client_port,
-		Server_ip:   server_ip,
-		Server_port: server_port,
+		ClientIP:   clientIP,
+		ClientPort: clientPort,
+		ServerIP:   serverIP,
+		ServerPort: serverPort,
 
 		Direction: "request",
 
@@ -63,22 +92,20 @@ func LogRequest(req *http1parser.HTTPRequest, pid, tid, client_ip uint32, client
 
 		Headers: req.Headers,
 		Body:    string(req.Body),
-	}
-
-	return Log(event)
+	})
 }
 
-func LogResponse(resp *http1parser.HTTPResponse, pid, tid, client_ip uint32, client_port uint16, server_ip uint32, server_port uint16) error {
-	event := HTTPEvent{
+func LogResponse(resp *http1parser.HTTPResponse, pid, tid uint32, clientIP string, clientPort uint16, serverIP string, serverPort uint16) {
+	enqueue(HTTPEvent{
 		Timestamp: time.Now().Format(time.RFC3339),
 
 		PID: pid,
 		TID: tid,
 
-		Client_ip:   client_ip,
-		Client_port: client_port,
-		Server_ip:   server_ip,
-		Server_port: server_port,
+		ClientIP:   clientIP,
+		ClientPort: clientPort,
+		ServerIP:   serverIP,
+		ServerPort: serverPort,
 
 		Direction: "response",
 
@@ -87,7 +114,5 @@ func LogResponse(resp *http1parser.HTTPResponse, pid, tid, client_ip uint32, cli
 
 		Headers: resp.Headers,
 		Body:    string(resp.Body),
-	}
-
-	return Log(event)
+	})
 }
