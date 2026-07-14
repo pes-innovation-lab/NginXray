@@ -19,7 +19,6 @@ import (
 	"github.com/cilium/ebpf/rlimit"
 )
 
-
 type LPMKey struct {
 	PrefixLen uint32
 	IP        uint32

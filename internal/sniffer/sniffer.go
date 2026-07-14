@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	logger "nginxray/internal/logger"
+	masking "nginxray/internal/masking"
 	http1parser "nginxray/internal/parser"
 
 	"github.com/cilium/ebpf/link"
@@ -38,7 +39,6 @@ type connection struct {
 	h2logged        bool // whether we've already logged this connection's poison
 }
 
-
 type sslbuffer struct {
 	Timens      uint64
 	Tid         uint32
@@ -53,7 +53,6 @@ type sslbuffer struct {
 	Server_ip   [16]byte
 	Buf         [8192]byte
 }
-
 
 func ipStr(family uint16, raw [16]byte) string {
 	if family == afInet6 {
@@ -258,12 +257,12 @@ func main() {
 			continue
 		}
 
+		// create a connnection if one does not exist
 		conn := connections[buf.SSL_ptr]
 		if conn == nil {
 			conn = &connection{}
 			connections[buf.SSL_ptr] = conn
 		}
-
 		isReq := buf.Dir == dirRecv
 		data := buf.Buf[:buf.Len]
 
@@ -274,11 +273,14 @@ func main() {
 			truncated := buf.Len == maxCapturedRead
 			if isReq {
 				for _, m := range conn.h2.FeedRequest(data, truncated) {
+					masking.MaskRequest(m.Request)
 					logger.LogRequest(m.Request, buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port)
 					printH2Request(buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port, m)
 				}
 			} else {
 				for _, m := range conn.h2.FeedResponse(data, truncated) {
+
+					masking.MaskResponse(m.Response)
 					logger.LogResponse(m.Response, buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port)
 					printH2Response(buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port, m)
 				}
@@ -301,6 +303,7 @@ func main() {
 				rb := conn.request_buffer.Bytes()
 				if len(rb) >= http1parser.PrefaceLen {
 					for _, m := range conn.h2.FeedRequest(rb[http1parser.PrefaceLen:], false) {
+						masking.MaskRequest(m.Request)
 						logger.LogRequest(m.Request, buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port)
 						printH2Request(buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port, m)
 					}
@@ -308,6 +311,7 @@ func main() {
 				conn.request_buffer.Reset()
 				if conn.response_buffer.Len() > 0 { // drain any early response bytes
 					for _, m := range conn.h2.FeedResponse(conn.response_buffer.Bytes(), false) {
+						masking.MaskResponse(m.Response)
 						logger.LogResponse(m.Response, buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port)
 						printH2Response(buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port, m)
 					}
@@ -331,7 +335,9 @@ func main() {
 					break
 				}
 
-				// log to elasticsearch 
+				// mask req before printing
+				masking.MaskRequest(req)
+				// log to elasticsearch
 				logger.LogRequest(req, buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port)
 
 				fmt.Printf(
@@ -360,6 +366,7 @@ func main() {
 					break
 				}
 
+				masking.MaskResponse(resp)
 				logger.LogResponse(resp, buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port)
 
 				fmt.Printf(
