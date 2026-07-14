@@ -5,6 +5,7 @@ package main
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -24,6 +25,9 @@ const (
 	dirSend  = 0
 	dirRecv  = 1
 	dirClose = 2
+
+	afInet  = 2
+	afInet6 = 10
 )
 
 type connection struct {
@@ -34,6 +38,7 @@ type connection struct {
 	h2logged        bool // whether we've already logged this connection's poison
 }
 
+
 type sslbuffer struct {
 	Timens      uint64
 	Tid         uint32
@@ -41,30 +46,28 @@ type sslbuffer struct {
 	Len         uint32
 	Dir         uint32
 	SSL_ptr     uint64
-	Client_ip   uint32
+	Family      uint16
 	Client_port uint16
-	_           uint16
-	Server_ip   uint32
 	Server_port uint16
+	Client_ip   [16]byte
+	Server_ip   [16]byte
 	Buf         [8192]byte
 }
 
-// only for temporary logging to terminal
-func ipStr(raw uint32) string {
-	return net.IP{
-		byte(raw),
-		byte(raw >> 8),
-		byte(raw >> 16),
-		byte(raw >> 24),
-	}.String()
+
+func ipStr(family uint16, raw [16]byte) string {
+	if family == afInet6 {
+		return net.IP(raw[:]).String()
+	}
+	return net.IP(raw[:4]).String()
 }
 
 const maxCapturedRead = 8191
 
-func printH2Request(pid, tid uint32, clientIP uint32, clientPort uint16, serverIP uint32, serverPort uint16, m http1parser.CompletedRequest) {
+func printH2Request(pid, tid uint32, clientIP string, clientPort uint16, serverIP string, serverPort uint16, m http1parser.CompletedRequest) {
 	fmt.Printf("pid=%d tid=%d [h2 stream %d]\n%s %s %s\nclient=%s:%d server=%s:%d\n",
 		pid, tid, m.StreamID, m.Request.Method, m.Request.Path, m.Request.Version,
-		ipStr(clientIP), clientPort, ipStr(serverIP), serverPort)
+		clientIP, clientPort, serverIP, serverPort)
 	for k, v := range m.Request.Headers {
 		fmt.Printf("%s: %s\n", k, v)
 	}
@@ -75,10 +78,10 @@ func printH2Request(pid, tid uint32, clientIP uint32, clientPort uint16, serverI
 	fmt.Print("\n")
 }
 
-func printH2Response(pid, tid uint32, clientIP uint32, clientPort uint16, serverIP uint32, serverPort uint16, m http1parser.CompletedResponse) {
+func printH2Response(pid, tid uint32, clientIP string, clientPort uint16, serverIP string, serverPort uint16, m http1parser.CompletedResponse) {
 	fmt.Printf("pid=%d tid=%d [h2 stream %d]\n%s %d %s\nclient=%s:%d server=%s:%d\n",
 		pid, tid, m.StreamID, m.Response.Version, m.Response.Code, m.Response.Status,
-		ipStr(clientIP), clientPort, ipStr(serverIP), serverPort)
+		clientIP, clientPort, serverIP, serverPort)
 	for k, v := range m.Response.Headers {
 		fmt.Printf("%s: %s\n", k, v)
 	}
@@ -144,7 +147,6 @@ func main() {
 	}
 	defer objs.Close()
 
-	// initialize elastic search connection
 	logger.Init()
 
 	// get ssl executable
@@ -228,12 +230,17 @@ func main() {
 	if err != nil {
 		log.Fatalf("creating ringbuffer reader %s", err)
 	}
+	defer rd.Close()
 
 	connections := make(map[uint64]*connection)
 
 	for {
 		record, err := rd.Read()
 		if err != nil {
+			if errors.Is(err, ringbuf.ErrClosed) {
+				log.Println("ringbuffer reader closed, exiting")
+				return
+			}
 			log.Printf("reading ringbuf %s", err)
 			continue
 		}
@@ -260,21 +267,20 @@ func main() {
 		isReq := buf.Dir == dirRecv
 		data := buf.Buf[:buf.Len]
 
+		clientIP := ipStr(buf.Family, buf.Client_ip)
+		serverIP := ipStr(buf.Family, buf.Server_ip)
+
 		if conn.proto == http1parser.ProtoHTTP2 {
 			truncated := buf.Len == maxCapturedRead
 			if isReq {
 				for _, m := range conn.h2.FeedRequest(data, truncated) {
-					if err := logger.LogRequest(m.Request, buf.Pid, buf.Tid, buf.Client_ip, buf.Client_port, buf.Server_ip, buf.Server_port); err != nil {
-						log.Printf("logging h2 request to elasticsearch: %s", err)
-					}
-					printH2Request(buf.Pid, buf.Tid, buf.Client_ip, buf.Client_port, buf.Server_ip, buf.Server_port, m)
+					logger.LogRequest(m.Request, buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port)
+					printH2Request(buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port, m)
 				}
 			} else {
 				for _, m := range conn.h2.FeedResponse(data, truncated) {
-					if err := logger.LogResponse(m.Response, buf.Pid, buf.Tid, buf.Client_ip, buf.Client_port, buf.Server_ip, buf.Server_port); err != nil {
-						log.Printf("logging h2 response to elasticsearch: %s", err)
-					}
-					printH2Response(buf.Pid, buf.Tid, buf.Client_ip, buf.Client_port, buf.Server_ip, buf.Server_port, m)
+					logger.LogResponse(m.Response, buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port)
+					printH2Response(buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port, m)
 				}
 			}
 			logPoison(conn)
@@ -294,18 +300,14 @@ func main() {
 				conn.h2 = http1parser.NewHTTP2Conn()
 				rb := conn.request_buffer.Bytes()
 				for _, m := range conn.h2.FeedRequest(rb[http1parser.PrefaceLen:], false) {
-					if err := logger.LogRequest(m.Request, buf.Pid, buf.Tid, buf.Client_ip, buf.Client_port, buf.Server_ip, buf.Server_port); err != nil {
-						log.Printf("logging h2 request to elasticsearch: %s", err)
-					}
-					printH2Request(buf.Pid, buf.Tid, buf.Client_ip, buf.Client_port, buf.Server_ip, buf.Server_port, m)
+					logger.LogRequest(m.Request, buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port)
+					printH2Request(buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port, m)
 				}
 				conn.request_buffer.Reset()
 				if conn.response_buffer.Len() > 0 { // drain any early response bytes
 					for _, m := range conn.h2.FeedResponse(conn.response_buffer.Bytes(), false) {
-						if err := logger.LogResponse(m.Response, buf.Pid, buf.Tid, buf.Client_ip, buf.Client_port, buf.Server_ip, buf.Server_port); err != nil {
-							log.Printf("logging h2 response to elasticsearch: %s", err)
-						}
-						printH2Response(buf.Pid, buf.Tid, buf.Client_ip, buf.Client_port, buf.Server_ip, buf.Server_port, m)
+						logger.LogResponse(m.Response, buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port)
+						printH2Response(buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port, m)
 					}
 					conn.response_buffer.Reset()
 				}
@@ -327,11 +329,8 @@ func main() {
 					break
 				}
 
-				// log to elasticsearch
-				err := logger.LogRequest(req, buf.Pid, buf.Tid, buf.Client_ip, buf.Client_port, buf.Server_ip, buf.Server_port)
-				if err != nil {
-					log.Printf("logging request to elasticsearch: %s", err)
-				}
+				// log to elasticsearch 
+				logger.LogRequest(req, buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port)
 
 				fmt.Printf(
 					"pid=%d tid=%d\n%s %s %s\nclient=%s:%d server=%s:%d\n",
@@ -340,9 +339,9 @@ func main() {
 					req.Method,
 					req.Path,
 					req.Version,
-					ipStr(buf.Client_ip),
+					clientIP,
 					buf.Client_port,
-					ipStr(buf.Server_ip),
+					serverIP,
 					buf.Server_port,
 				)
 
@@ -359,10 +358,7 @@ func main() {
 					break
 				}
 
-				err := logger.LogResponse(resp, buf.Pid, buf.Tid, buf.Client_ip, buf.Client_port, buf.Server_ip, buf.Server_port)
-				if err != nil {
-					log.Printf("logging request to elasticsearch: %s", err)
-				}
+				logger.LogResponse(resp, buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port)
 
 				fmt.Printf(
 					"pid=%d tid=%d\n%s %d %s\nclient=%s:%d server=%s:%d\n",
@@ -371,9 +367,9 @@ func main() {
 					resp.Version,
 					resp.Code,
 					resp.Status,
-					ipStr(buf.Client_ip),
+					clientIP,
 					buf.Client_port,
-					ipStr(buf.Server_ip),
+					serverIP,
 					buf.Server_port,
 				)
 
