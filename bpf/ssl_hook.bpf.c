@@ -42,6 +42,12 @@ struct conn_info {
     __u8 server_ip[16];
 };
 
+
+struct ssl_key {
+    __u64 ssl;
+    __u32 pid;
+};
+
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 10240);
@@ -51,23 +57,23 @@ struct {
 
 // hashmaps to obtain socket info and associate it to a sslpt
 struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(type, BPF_MAP_TYPE_LRU_HASH);
     __uint(max_entries, 10240);
-    __type(key, __u32); // tid
+    __type(key, __u32); // tid (globally unique, no pid needed)
     __type(value, struct conn_info);
 } tid_to_conn SEC(".maps");
 
 struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(type, BPF_MAP_TYPE_LRU_HASH);
     __uint(max_entries, 10240);
-    __type(key, int); // fd
+    __type(key, __u64); // (pid << 32) | fd
     __type(value, struct conn_info);
 } fd_to_conn SEC(".maps");
 
 struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(type, BPF_MAP_TYPE_LRU_HASH);
     __uint(max_entries, 10240);
-    __type(key, __u64); // sslptr
+    __type(key, struct ssl_key); // {ssl ptr, pid}
     __type(value, struct conn_info);
 } ssl_to_conn SEC(".maps");
 
@@ -143,8 +149,10 @@ int BPF_UPROBE(ssl_free_entry, void *ssl) {
     __builtin_memset(e->server_ip, 0, sizeof(e->server_ip));
     bpf_ringbuf_submit(e, 0);
 
-    __u64 ssl_key = (__u64)ssl;
-    bpf_map_delete_elem(&ssl_to_conn, &ssl_key);
+    struct ssl_key sk = {};
+    sk.ssl = (__u64)ssl;
+    sk.pid = bpf_get_current_pid_tgid() >> 32;
+    bpf_map_delete_elem(&ssl_to_conn, &sk);
     return 0;
 }
 
@@ -190,7 +198,10 @@ int BPF_URETPROBE(ssl_read_exit) {
     bpf_probe_read_user(e->buf, len, (void *)s->buf);
 
     // obtain connection info
-    struct conn_info *c = bpf_map_lookup_elem(&ssl_to_conn, &e->ssl_ptr);
+    struct ssl_key sk = {};
+    sk.ssl = e->ssl_ptr;
+    sk.pid = pid;
+    struct conn_info *c = bpf_map_lookup_elem(&ssl_to_conn, &sk);
     if (c) {
         e->family = c->family;
         e->client_port = bpf_ntohs(c->client_port);
@@ -247,7 +258,10 @@ int BPF_URETPROBE(ssl_write_exit) {
     e->ssl_ptr = (__u64)s->ssl;
     bpf_probe_read_user(e->buf, len, (void *)s->buf);
 
-    struct conn_info *c = bpf_map_lookup_elem(&ssl_to_conn, &e->ssl_ptr);
+    struct ssl_key sk = {};
+    sk.ssl = e->ssl_ptr;
+    sk.pid = pid;
+    struct conn_info *c = bpf_map_lookup_elem(&ssl_to_conn, &sk);
     if (c) {
         e->family = c->family;
         e->client_port = bpf_ntohs(c->client_port);
@@ -307,19 +321,22 @@ int BPF_KRETPROBE(accept_exit) {
     if (!is_target())
         return 0;
 
-    __u32 tid = (__u32)bpf_get_current_pid_tgid();
+    __u64 pid_tgid = bpf_get_current_pid_tgid();
+    __u32 tid = (__u32)pid_tgid;
+    __u32 pid = pid_tgid >> 32;
 
     int newfd = PT_REGS_RC(ctx);
+
+    struct conn_info *conn = bpf_map_lookup_elem(&tid_to_conn, &tid);
+    // always consume, even on newfd < 0
+    bpf_map_delete_elem(&tid_to_conn, &tid);
+    if (!conn)
+        return 0;
     if (newfd < 0)
         return 0;
 
-    struct conn_info *conn = bpf_map_lookup_elem(&tid_to_conn, &tid);
-    if (!conn)
-        return 0;
-
-    bpf_map_update_elem(&fd_to_conn, &newfd, conn, BPF_ANY);
-    // delete elem after user
-    bpf_map_delete_elem(&tid_to_conn, &tid);
+    __u64 fd_key = ((__u64)pid << 32) | (__u32)newfd;
+    bpf_map_update_elem(&fd_to_conn, &fd_key, conn, BPF_ANY);
     return 0;
 }
 
@@ -328,35 +345,46 @@ int BPF_KRETPROBE(accept4_exit) {
     if (!is_target())
         return 0;
 
-    __u32 tid = (__u32)bpf_get_current_pid_tgid();
+    __u64 pid_tgid = bpf_get_current_pid_tgid();
+    __u32 tid = (__u32)pid_tgid;
+    __u32 pid = pid_tgid >> 32;
 
     int newfd = PT_REGS_RC(ctx);
+
+    struct conn_info *conn = bpf_map_lookup_elem(&tid_to_conn, &tid);
+    bpf_map_delete_elem(&tid_to_conn, &tid);
+    if (!conn)
+        return 0;
     if (newfd < 0)
         return 0;
 
-    struct conn_info *conn = bpf_map_lookup_elem(&tid_to_conn, &tid);
-    if (!conn)
-        return 0;
-
-    bpf_map_update_elem(&fd_to_conn, &newfd, conn, BPF_ANY);
-    bpf_map_delete_elem(&tid_to_conn, &tid);
+    __u64 fd_key = ((__u64)pid << 32) | (__u32)newfd;
+    bpf_map_update_elem(&fd_to_conn, &fd_key, conn, BPF_ANY);
     return 0;
 }
 
 // finally map sslptr -> connection info
 SEC("uprobe/SSL_set_fd")
 int BPF_UPROBE(ssl_set_fd, void *ssl, int fd) {
+    
+    if (!is_target())
+        return 0;
 
-    struct conn_info *conn = bpf_map_lookup_elem(&fd_to_conn, &fd);
+    __u32 pid = bpf_get_current_pid_tgid() >> 32;
+    __u64 fd_key = ((__u64)pid << 32) | (__u32)fd;
+
+    struct conn_info *conn = bpf_map_lookup_elem(&fd_to_conn, &fd_key);
     if (!conn)
         return 0;
 
-    __u64 ssl_key = (__u64)ssl;
+    struct ssl_key sk = {};
+    sk.ssl = (__u64)ssl;
+    sk.pid = pid;
 
     // map will be used by read/write exit probes to obtain client/server ip and
     // port
-    bpf_map_update_elem(&ssl_to_conn, &ssl_key, conn, BPF_ANY);
-    bpf_map_delete_elem(&fd_to_conn, &fd);
+    bpf_map_update_elem(&ssl_to_conn, &sk, conn, BPF_ANY);
+    bpf_map_delete_elem(&fd_to_conn, &fd_key);
     return 0;
 }
 
