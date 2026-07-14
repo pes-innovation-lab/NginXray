@@ -80,7 +80,7 @@ func MaskResponse(resp *http1parser.HTTPResponse) {
 func maskHeaders(headers map[string]string) {
 	for headerName := range headers {
 		if _, exists := sensitiveHeaders[strings.ToLower(headerName)]; exists {
-			headers[headerName] = "[REDEACTED]"
+			headers[headerName] = "[REDACTED_HEADER]"
 		}
 	}
 }
@@ -137,4 +137,3 @@ func maskPlaintext(body []byte) []byte {
 
 	return []byte(s)
 }
-
