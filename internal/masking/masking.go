@@ -38,6 +38,25 @@ var sensitiveFields = map[string]struct{}{
 	"card_number":   {},
 	"private_key":   {},
 	"jwt":           {},
+	"aadhaar":        {},
+	"aadhaar_number": {},
+	"pan":            {},
+	"pan_number":     {},
+	"upi":            {},
+	"upi_id":         {},
+	"ifsc":           {},
+	"account_number": {},
+	"bank_account":   {},
+	"passport":       {},
+	"passport_no":    {},
+	"driver_license": {},
+	"dl":             {},
+	"voter_id":       {},
+	"cvv":            {},
+	"expiry":         {},
+	"expiry_date":    {},
+	"dob":            {},
+	"date_of_birth":  {},
 }
 
 // regexes used for plaintext body masking
@@ -45,25 +64,86 @@ var plaintextPatterns = []struct {
 	re   *regexp.Regexp
 	repl string
 }{
+	// passwords
 	{
 		regexp.MustCompile(`(?i)(password|passwd|pwd)\s*[:=]\s*([^\s&,"']+)`),
 		`$1=[REDACTED]`,
 	},
+
+	// tokens / secrets
 	{
-		regexp.MustCompile(`(?i)(token|access_token|refresh_token|jwt|api_key|apikey|client_secret|secret)\s*[:=]\s*([^\s&,"']+)`),
+		regexp.MustCompile(`(?i)(token|access_token|refresh_token|jwt|api_key|apikey|client_secret|secret|bearer)\s*[:=]\s*([^\s&,"']+)`),
 		`$1=[REDACTED]`,
 	},
+
+	// Authorization: Bearer ...
+	{
+		regexp.MustCompile(`(?i)authorization\s*:\s*bearer\s+[A-Za-z0-9\-._~+/]+=*`),
+		`Authorization: Bearer [REDACTED]`,
+	},
+
+	// JWT
+	{
+		regexp.MustCompile(`eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9._-]+\.[A-Za-z0-9._-]+`),
+		`[REDACTED_JWT]`,
+	},
+
+	// email
 	{
 		regexp.MustCompile(`(?i)[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[A-Za-z]{2,}`),
 		`[REDACTED_EMAIL]`,
 	},
+
+	// phone numbers
 	{
-		regexp.MustCompile(`\b(?:\+?\d{1,3}[- ]?)?(?:\d{10}|\d{3}[- ]\d{3}[- ]\d{4})\b`),
+		regexp.MustCompile(`(?:\+91[- ]?)?[6-9]\d{9}`),
 		`[REDACTED_PHONE]`,
 	},
+
+	// Aadhaar
+	{
+		regexp.MustCompile(`\b\d{4}\s?\d{4}\s?\d{4}\b`),
+		`[REDACTED_AADHAAR]`,
+	},
+
+	// PAN
+	{
+		regexp.MustCompile(`\b[A-Z]{5}[0-9]{4}[A-Z]\b`),
+		`[REDACTED_PAN]`,
+	},
+
+	// UPI ID
+	{
+		regexp.MustCompile(`\b[a-zA-Z0-9.\-_]{2,}@[a-zA-Z]{2,}\b`),
+		`[REDACTED_UPI]`,
+	},
+
+	// IFSC
+	{
+		regexp.MustCompile(`\b[A-Z]{4}0[A-Z0-9]{6}\b`),
+		`[REDACTED_IFSC]`,
+	},
+
+	// Passport
+	{
+		regexp.MustCompile(`\b[A-Z][0-9]{7}\b`),
+		`[REDACTED_PASSPORT]`,
+	},
+	// Voter ID
+	{
+		regexp.MustCompile(`\b[A-Z]{3}[0-9]{7}\b`),
+		`[REDACTED_VOTER_ID]`,
+	},
+
+	// Credit/Debit card
 	{
 		regexp.MustCompile(`\b(?:\d[ -]*?){13,19}\b`),
 		`[REDACTED_CARD]`,
+	},
+	// IPv4
+	{
+		regexp.MustCompile(`\b(?:\d{1,3}\.){3}\d{1,3}\b`),
+		`[REDACTED_IP]`,
 	},
 }
 
