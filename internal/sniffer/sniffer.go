@@ -12,7 +12,9 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
+	analysis "nginxray/internal/analysis"
 	logger "nginxray/internal/logger"
 	masking "nginxray/internal/masking"
 	http1parser "nginxray/internal/parser"
@@ -269,19 +271,26 @@ func main() {
 		clientIP := ipStr(buf.Family, buf.Client_ip)
 		serverIP := ipStr(buf.Family, buf.Server_ip)
 
+		// context for analysis also centralized time
+		eventTime := time.Now()
+		ctx := analysis.RequestContext{
+			Timestamp: eventTime.Format(time.RFC3339Nano),
+			ClientIP:  clientIP,
+		}
+
 		if conn.proto == http1parser.ProtoHTTP2 {
 			truncated := buf.Len == maxCapturedRead
 			if isReq {
 				for _, m := range conn.h2.FeedRequest(data, truncated) {
 					masking.MaskRequest(m.Request)
-					logger.LogRequest(m.Request, buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port)
+					logger.LogRequest(m.Request, buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port, ctx.Timestamp)
 					printH2Request(buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port, m)
 				}
 			} else {
 				for _, m := range conn.h2.FeedResponse(data, truncated) {
 
 					masking.MaskResponse(m.Response)
-					logger.LogResponse(m.Response, buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port)
+					logger.LogResponse(m.Response, buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port, ctx.Timestamp)
 					printH2Response(buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port, m)
 				}
 			}
@@ -304,7 +313,7 @@ func main() {
 				if len(rb) >= http1parser.PrefaceLen {
 					for _, m := range conn.h2.FeedRequest(rb[http1parser.PrefaceLen:], false) {
 						masking.MaskRequest(m.Request)
-						logger.LogRequest(m.Request, buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port)
+						logger.LogRequest(m.Request, buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port, ctx.Timestamp)
 						printH2Request(buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port, m)
 					}
 				}
@@ -312,7 +321,7 @@ func main() {
 				if conn.response_buffer.Len() > 0 { // drain any early response bytes
 					for _, m := range conn.h2.FeedResponse(conn.response_buffer.Bytes(), false) {
 						masking.MaskResponse(m.Response)
-						logger.LogResponse(m.Response, buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port)
+						logger.LogResponse(m.Response, buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port, ctx.Timestamp)
 						printH2Response(buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port, m)
 					}
 					conn.response_buffer.Reset()
@@ -337,8 +346,18 @@ func main() {
 
 				// mask req before printing
 				masking.MaskRequest(req)
+
+				// analyse request
+				detections := analysis.AnalyseReq(*req, ctx)
+
+				action := analysis.Decide(clientIP, detections)
+
+				if action == analysis.Block {
+					continue
+				}
+
 				// log to elasticsearch
-				logger.LogRequest(req, buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port)
+				logger.LogRequest(req, buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port, ctx.Timestamp)
 
 				fmt.Printf(
 					"pid=%d tid=%d\n%s %s %s\nclient=%s:%d server=%s:%d\n",
@@ -367,7 +386,7 @@ func main() {
 				}
 
 				masking.MaskResponse(resp)
-				logger.LogResponse(resp, buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port)
+				logger.LogResponse(resp, buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port, ctx.Timestamp)
 
 				fmt.Printf(
 					"pid=%d tid=%d\n%s %d %s\nclient=%s:%d server=%s:%d\n",

@@ -72,9 +72,9 @@ func enqueue(event HTTPEvent) {
 	}
 }
 
-func LogRequest(req *http1parser.HTTPRequest, pid, tid uint32, clientIP string, clientPort uint16, serverIP string, serverPort uint16) {
+func LogRequest(req *http1parser.HTTPRequest, pid, tid uint32, clientIP string, clientPort uint16, serverIP string, serverPort uint16, t string) {
 	enqueue(HTTPEvent{
-		Timestamp: time.Now().Format(time.RFC3339),
+		Timestamp: t,
 
 		PID: pid,
 		TID: tid,
@@ -95,9 +95,9 @@ func LogRequest(req *http1parser.HTTPRequest, pid, tid uint32, clientIP string, 
 	})
 }
 
-func LogResponse(resp *http1parser.HTTPResponse, pid, tid uint32, clientIP string, clientPort uint16, serverIP string, serverPort uint16) {
+func LogResponse(resp *http1parser.HTTPResponse, pid, tid uint32, clientIP string, clientPort uint16, serverIP string, serverPort uint16, t string) {
 	enqueue(HTTPEvent{
-		Timestamp: time.Now().Format(time.RFC3339),
+		Timestamp: t,
 
 		PID: pid,
 		TID: tid,
