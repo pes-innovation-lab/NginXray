@@ -1,10 +1,12 @@
-.PHONY: all setup vmlinux deps build generate clean filter sniffer run-filter run-sniffer fmt help docker-up docker-down docker-restart docker-logs docker-ps
+.PHONY: all setup vmlinux deps build generate clean filter sniffer h3sniffer run-filter run-sniffer run-h3sniffer fmt help docker-up docker-down docker-restart docker-logs docker-ps
 
-FILTER_DIR  := internal/filter
-SNIFFER_DIR := internal/sniffer
+FILTER_DIR    := internal/filter
+SNIFFER_DIR   := internal/sniffer
+H3SNIFFER_DIR := internal/http3_sniffer
 
-FILTER_BIN  := $(FILTER_DIR)/xdp-loader
-SNIFFER_BIN := $(SNIFFER_DIR)/sniffer
+FILTER_BIN    := $(FILTER_DIR)/xdp-loader
+SNIFFER_BIN   := $(SNIFFER_DIR)/sniffer
+H3SNIFFER_BIN := $(H3SNIFFER_DIR)/http3-sniffer
 
 BPF_DIR := bpf
 VMLINUX := $(BPF_DIR)/vmlinux.h
@@ -20,9 +22,12 @@ generatefilter:
 generatesniffer:
 	@echo "Generating eBPF bytecode (sniffer)..."
 	cd $(SNIFFER_DIR) && go generate
+generateh3sniffer:
+	@echo "Generating eBPF bytecode (http3_sniffer)..."
+	cd $(H3SNIFFER_DIR) && go generate
 
 
-build: filter sniffer
+build: filter sniffer h3sniffer
 
 filter: generatefilter
 	@echo "Building XDP loader..."
@@ -34,11 +39,19 @@ sniffer: generatesniffer
 	cd $(SNIFFER_DIR) && go build -buildvcs=false -o sniffer
 	@echo "Build complete: ./$(SNIFFER_BIN)"
 
-run-filter: 
+h3sniffer: generateh3sniffer
+	@echo "Building HTTP/3 header sniffer..."
+	cd $(H3SNIFFER_DIR) && go build -buildvcs=false -o http3-sniffer
+	@echo "Build complete: ./$(H3SNIFFER_BIN)"
+
+run-filter:
 	sudo ./$(FILTER_BIN)
 
-run-sniffer: 
+run-sniffer:
 	sudo ./$(SNIFFER_BIN)
+
+run-h3sniffer:
+	sudo ./$(H3SNIFFER_BIN)
 
 
 deps:
@@ -70,8 +83,8 @@ docker-ps:
 $(VMLINUX):
 	@echo "vmlinux.h missing — generating from kernel BTF..."
 	sudo bpftool btf dump file /sys/kernel/btf/vmlinux format c > $(VMLINUX)
-	@echo "Wrote $(VMLINUX)"	
- 
+	@echo "Wrote $(VMLINUX)"
+
 vmlinux:
 	@echo "Regenerating vmlinux.h from kernel BTF..."
 	sudo bpftool btf dump file /sys/kernel/btf/vmlinux format c > $(VMLINUX)
@@ -82,11 +95,13 @@ fmt:
 
 clean:
 	@echo "Cleaning build artifacts..."
-	rm -f $(FILTER_BIN) $(SNIFFER_BIN)
+	rm -f $(FILTER_BIN) $(SNIFFER_BIN) $(H3SNIFFER_BIN)
 	rm -f $(FILTER_DIR)/bpf_bpfel.go  $(FILTER_DIR)/bpf_bpfel.o
 	rm -f $(FILTER_DIR)/bpf_bpfeb.go  $(FILTER_DIR)/bpf_bpfeb.o
 	rm -f $(SNIFFER_DIR)/bpf_bpfel.go $(SNIFFER_DIR)/bpf_bpfel.o
 	rm -f $(SNIFFER_DIR)/bpf_bpfeb.go $(SNIFFER_DIR)/bpf_bpfeb.o
+	rm -f $(H3SNIFFER_DIR)/h3_bpfel.go $(H3SNIFFER_DIR)/h3_bpfel.o
+	rm -f $(H3SNIFFER_DIR)/h3_bpfeb.go $(H3SNIFFER_DIR)/h3_bpfeb.o
 	@echo "Clean complete"
 
 help:
@@ -100,8 +115,10 @@ help:
 	@echo "  make build              - Generate eBPF + build both binaries"
 	@echo "  make filter             - Build only the XDP loader"
 	@echo "  make sniffer            - Build only the SSL sniffer"
+	@echo "  make h3sniffer          - Build only the HTTP/3 header sniffer"
 	@echo "  make generatefilter     - Run bpf2go codegen in filter dir"
 	@echo "  make generatesniffer    - Run bpf2go codegen in sniffer dir"
+	@echo "  make generateh3sniffer  - Run bpf2go codegen in http3_sniffer dir"
 	@echo "  make vmlinux            - Force-regenerate bpf/vmlinux.h (after kernel change)"
 	@echo "  make clean              - Remove binaries and generated bpf files"
 	@echo "  make deps               - go mod tidy"
@@ -115,5 +132,6 @@ help:
 	@echo "  make docker-ps        - Show running containers"
 	@echo ""
 	@echo "Run (requires sudo):"
-	@echo "  make run-filter   - Build + run the XDP loader as root"
-	@echo "  make run-sniffer  - Build + run the SSL sniffer as root"
+	@echo "  make run-filter      - Build + run the XDP loader as root"
+	@echo "  make run-sniffer     - Build + run the SSL sniffer as root"
+	@echo "  make run-h3sniffer   - Build + run the HTTP/3 header sniffer as root"
