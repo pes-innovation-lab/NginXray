@@ -80,7 +80,6 @@ static __always_inline int check_block(struct block_info *blocked, __u64 now) {
     if (blocked->expires_at_ns && now > blocked->expires_at_ns)
         return XDP_PASS;
 
-    bpf_printk("DROP reason=%d", blocked->reason);
     __sync_fetch_and_add(&blocked->hit_count, 1);
     return XDP_DROP;
 } // this common for both ipv4 and ipv6
@@ -179,7 +178,6 @@ static __always_inline int check_ratelim_ipv6(__u8 req_ip[16], __u64 now) {
 // define xdp section
 SEC("xdp")
 int filter(struct xdp_md *ctx) {
-    bpf_printk("XDP HIT");
     __u64 now = bpf_ktime_get_ns();
 
     // cast it into a long pointer
@@ -202,10 +200,9 @@ int filter(struct xdp_md *ctx) {
         key.prefixlen = 32;
         key.ip = ip->saddr;
 
-        bpf_printk("lookup=%x", key.ip);
+        struct block_info *blocked = bpf_map_lookup_elem(&lpm_map, &key);
 
-        int block_status =
-            check_block(bpf_map_lookup_elem(&lpm_map, &key), now);
+        int block_status = check_block(blocked, now);
         if (block_status == XDP_DROP) {
             return XDP_DROP;
         }
