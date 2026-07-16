@@ -273,13 +273,14 @@ func main() {
 			truncated := buf.Len == maxCapturedRead
 			if isReq {
 				for _, m := range conn.h2.FeedRequest(data, truncated) {
+					http1parser.DecodeRequestBody(m.Request)
 					masking.MaskRequest(m.Request)
 					logger.LogRequest(m.Request, buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port)
 					printH2Request(buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port, m)
 				}
 			} else {
 				for _, m := range conn.h2.FeedResponse(data, truncated) {
-
+					http1parser.DecodeResponseBody(m.Response) 
 					masking.MaskResponse(m.Response)
 					logger.LogResponse(m.Response, buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port)
 					printH2Response(buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port, m)
@@ -303,6 +304,7 @@ func main() {
 				rb := conn.request_buffer.Bytes()
 				if len(rb) >= http1parser.PrefaceLen {
 					for _, m := range conn.h2.FeedRequest(rb[http1parser.PrefaceLen:], false) {
+						http1parser.DecodeRequestBody(m.Request)
 						masking.MaskRequest(m.Request)
 						logger.LogRequest(m.Request, buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port)
 						printH2Request(buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port, m)
@@ -311,6 +313,7 @@ func main() {
 				conn.request_buffer.Reset()
 				if conn.response_buffer.Len() > 0 { // drain any early response bytes
 					for _, m := range conn.h2.FeedResponse(conn.response_buffer.Bytes(), false) {
+						http1parser.DecodeResponseBody(m.Response) 
 						masking.MaskResponse(m.Response)
 						logger.LogResponse(m.Response, buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port)
 						printH2Response(buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port, m)
@@ -334,7 +337,7 @@ func main() {
 				if !ok {
 					break
 				}
-
+				http1parser.DecodeRequestBody(req)
 				// mask req before printing
 				masking.MaskRequest(req)
 				// log to elasticsearch
@@ -365,7 +368,7 @@ func main() {
 				if !ok {
 					break
 				}
-
+				http1parser.DecodeResponseBody(resp) 
 				masking.MaskResponse(resp)
 				logger.LogResponse(resp, buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port)
 
