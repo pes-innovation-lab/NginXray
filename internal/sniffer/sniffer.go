@@ -301,9 +301,6 @@ func main() {
 
 					action := analysis.Decide(clientIP, detections)
 
-					// debug
-					fmt.Println("action =", action)
-
 					if action == analysis.Block {
 						if err := fw.AddBlocked(
 							clientIP,
@@ -352,9 +349,6 @@ func main() {
 						}
 
 						action := analysis.Decide(clientIP, detections)
-
-						// debug
-						fmt.Println("action =", action)
 
 						if action == analysis.Block {
 							if err := fw.AddBlocked(
@@ -409,9 +403,6 @@ func main() {
 
 				// decide what to do
 				action := analysis.Decide(clientIP, detections)
-
-				// debug
-				fmt.Println("action =", action)
 
 				if action == analysis.Block {
 					if err := fw.AddBlocked(

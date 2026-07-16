@@ -25,9 +25,8 @@ generatesniffer:
 build: filter sniffer
 
 filter: generatefilter
-	@echo "Building XDP loader..."
-	cd $(FILTER_DIR) && go build -buildvcs=false -o xdp-loader
-	@echo "Build complete: ./$(FILTER_BIN)"
+	@echo "Building XDP filter library..."
+	cd $(FILTER_DIR) && go build -buildvcs=false
 
 sniffer: generatesniffer
 	@echo "Building SSL sniffer..."
@@ -35,7 +34,7 @@ sniffer: generatesniffer
 	@echo "Build complete: ./$(SNIFFER_BIN)"
 
 run-filter: 
-	sudo ./$(FILTER_BIN)
+	@echo "XDP filter is now integrated into sniffer. Run 'make run-sniffer' instead."
 
 run-sniffer: 
 	sudo ./$(SNIFFER_BIN)
