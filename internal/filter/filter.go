@@ -74,6 +74,8 @@ func (f *Filter) AddBlocked(cidr string, duration time.Duration, reason uint32) 
 			cidr += "/32" // bare IPv4
 		}
 	}
+	// debug
+	fmt.Println("Blocking", cidr)
 
 	_, ipnet, err := net.ParseCIDR(cidr)
 	if err != nil {
@@ -87,12 +89,17 @@ func (f *Filter) AddBlocked(cidr string, duration time.Duration, reason uint32) 
 	}
 
 	if ip4 := ipnet.IP.To4(); ip4 != nil {
-		key := LPMKey{PrefixLen: uint32(ones), IP: binary.LittleEndian.Uint32(ip4)}
+		key := LPMKey{
+			PrefixLen: uint32(ones),
+			IP:        binary.BigEndian.Uint32(ip4),
+		}
+		fmt.Printf("Go key: %#x\n", key.IP)
 		return f.objs.LpmMap.Put(key, value)
 	}
 
 	key := LPMKey6{PrefixLen: uint32(ones)}
 	copy(key.IP[:], ipnet.IP.To16())
+	fmt.Printf("Go key: %#x\n", key.IP)
 	return f.objs.LpmMapIpv6.Put(key, value)
 }
 

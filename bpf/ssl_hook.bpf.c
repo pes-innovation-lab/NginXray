@@ -33,7 +33,6 @@ struct ssl_state {
     __u64 ssl;
 };
 
-
 struct conn_info {
     __u16 family;
     __u16 client_port;
@@ -41,7 +40,6 @@ struct conn_info {
     __u8 client_ip[16];
     __u8 server_ip[16];
 };
-
 
 struct ssl_key {
     __u64 ssl;
@@ -366,7 +364,7 @@ int BPF_KRETPROBE(accept4_exit) {
 // finally map sslptr -> connection info
 SEC("uprobe/SSL_set_fd")
 int BPF_UPROBE(ssl_set_fd, void *ssl, int fd) {
-    
+
     if (!is_target())
         return 0;
 

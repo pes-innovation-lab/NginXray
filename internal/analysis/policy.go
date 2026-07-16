@@ -32,7 +32,7 @@ func Decide(clientIP string, detections []Detection) Action {
 	}
 
 	// decide action
-	if state.Score >= 90 {
+	if state.Score >= 70 {
 		return Block
 	}
 

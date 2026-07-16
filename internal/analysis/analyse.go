@@ -73,7 +73,6 @@ var cmdPatterns = []string{
 	"cat /etc/passwd",
 	"cat /etc/shadow",
 	"whoami",
-	"id",
 	"uname -a",
 	"ls",
 	"pwd",
@@ -107,6 +106,7 @@ func AnalyseReq(req parser.HTTPRequest, ctx RequestContext) []Detection {
 	for _, detector := range detectors {
 		if det := detector(ctx, req); det != nil {
 			detections = append(detections, *det)
+			break
 		}
 	}
 	return detections
