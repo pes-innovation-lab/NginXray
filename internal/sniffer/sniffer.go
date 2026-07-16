@@ -292,6 +292,26 @@ func main() {
 			truncated := buf.Len == maxCapturedRead
 			if isReq {
 				for _, m := range conn.h2.FeedRequest(data, truncated) {
+
+					detections := analysis.AnalyseReq(*m.Request, ctx)
+
+					for _, det := range detections {
+						logger.LogDetection(det)
+					}
+
+					action := analysis.Decide(clientIP, detections)
+
+					if action == analysis.Block {
+						if err := fw.AddBlocked(
+							clientIP,
+							500*time.Hour,
+							filter.BLOCK_L7_DETECT,
+						); err != nil {
+							log.Printf("failed to block %s: %v", clientIP, err)
+						}
+						continue
+					}
+
 					masking.MaskRequest(m.Request)
 					logger.LogRequest(m.Request, buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port, ctx.Timestamp)
 					printH2Request(buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port, m)
@@ -322,6 +342,25 @@ func main() {
 				rb := conn.request_buffer.Bytes()
 				if len(rb) >= http1parser.PrefaceLen {
 					for _, m := range conn.h2.FeedRequest(rb[http1parser.PrefaceLen:], false) {
+						detections := analysis.AnalyseReq(*m.Request, ctx)
+
+						for _, det := range detections {
+							logger.LogDetection(det)
+						}
+
+						action := analysis.Decide(clientIP, detections)
+
+						if action == analysis.Block {
+							if err := fw.AddBlocked(
+								clientIP,
+								500*time.Hour,
+								filter.BLOCK_L7_DETECT,
+							); err != nil {
+								log.Printf("failed to block %s: %v", clientIP, err)
+							}
+							continue
+						}
+
 						masking.MaskRequest(m.Request)
 						logger.LogRequest(m.Request, buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port, ctx.Timestamp)
 						printH2Request(buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port, m)
@@ -354,12 +393,15 @@ func main() {
 					break
 				}
 
-				// mask req before printing
-				masking.MaskRequest(req)
-
 				// analyse request
 				detections := analysis.AnalyseReq(*req, ctx)
 
+				// log every detection
+				for _, det := range detections {
+					logger.LogDetection(det)
+				}
+
+				// decide what to do
 				action := analysis.Decide(clientIP, detections)
 
 				if action == analysis.Block {
@@ -372,6 +414,8 @@ func main() {
 					}
 					continue
 				}
+				// mask req before logging
+				masking.MaskRequest(req)
 
 				// log to elasticsearch
 				logger.LogRequest(req, buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port, ctx.Timestamp)
