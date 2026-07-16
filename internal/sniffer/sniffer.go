@@ -15,6 +15,7 @@ import (
 	"time"
 
 	analysis "nginxray/internal/analysis"
+	filter "nginxray/internal/filter"
 	logger "nginxray/internal/logger"
 	masking "nginxray/internal/masking"
 	http1parser "nginxray/internal/parser"
@@ -149,6 +150,15 @@ func main() {
 	defer objs.Close()
 
 	logger.Init()
+
+	// get filter started
+	fw, err := filter.New(filter.InterfaceName)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer fw.Close()
+
+	fw.StartGC()
 
 	// get ssl executable
 	path, err := findLibSSLPath()
@@ -353,6 +363,13 @@ func main() {
 				action := analysis.Decide(clientIP, detections)
 
 				if action == analysis.Block {
+					if err := fw.AddBlocked(
+						clientIP,
+						500*time.Hour,
+						filter.BLOCK_L7_DETECT,
+					); err != nil {
+						log.Printf("failed to block %s: %v", clientIP, err)
+					}
 					continue
 				}
 

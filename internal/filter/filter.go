@@ -1,4 +1,4 @@
-package main
+package filter
 
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang bpf ../../bpf/xdp_filter.bpf.c -- -I../../bpf -D__TARGET_ARCH_x86
 
@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"os"
-	"os/signal"
 	"strings"
 	"time"
 
@@ -35,6 +33,12 @@ type BlockInfo struct {
 	_           uint32
 }
 
+// manages the XDP filter and blocklist maps
+type Filter struct {
+	objs    bpfObjects
+	xdpLink link.Link
+}
+
 const (
 	BLOCK_MANUAL = iota
 	BLOCK_RATELIMIT
@@ -42,12 +46,6 @@ const (
 	BLOCK_THREATFEED
 	BLOCK_DDOS_PROTECT
 )
-
-func must(err error) {
-	if err != nil {
-		log.Fatal(err)
-	}
-}
 
 func monotonicNowNS() uint64 {
 	var ts unix.Timespec
@@ -67,7 +65,8 @@ func key6IPString(key LPMKey6) string {
 	return net.IP(key.IP[:]).String()
 }
 
-func AddBlocked(v4, v6 *ebpf.Map, cidr string, duration time.Duration, reason uint32) error {
+// method on filter so its possible for sniffer program to use it
+func (f *Filter) AddBlocked(cidr string, duration time.Duration, reason uint32) error {
 	if !strings.Contains(cidr, "/") {
 		if strings.Contains(cidr, ":") {
 			cidr += "/128" // bare IPv6
@@ -89,12 +88,12 @@ func AddBlocked(v4, v6 *ebpf.Map, cidr string, duration time.Duration, reason ui
 
 	if ip4 := ipnet.IP.To4(); ip4 != nil {
 		key := LPMKey{PrefixLen: uint32(ones), IP: binary.LittleEndian.Uint32(ip4)}
-		return v4.Put(key, value)
+		return f.objs.LpmMap.Put(key, value)
 	}
 
 	key := LPMKey6{PrefixLen: uint32(ones)}
 	copy(key.IP[:], ipnet.IP.To16())
-	return v6.Put(key, value)
+	return f.objs.LpmMapIpv6.Put(key, value)
 }
 
 func cleanupExpired[K any](m *ebpf.Map) { // clean expired entries from the map
@@ -124,23 +123,23 @@ func cleanupExpired[K any](m *ebpf.Map) { // clean expired entries from the map
 	}
 }
 
-func StartGC(v4, v6 *ebpf.Map) {
+func (f *Filter) StartGC() {
 	ticker := time.NewTicker(10 * time.Second)
 	go func() {
 		defer ticker.Stop()
 		for range ticker.C {
-			cleanupExpired[LPMKey](v4)
-			cleanupExpired[LPMKey6](v6)
+			cleanupExpired[LPMKey](f.objs.LpmMap)
+			cleanupExpired[LPMKey6](f.objs.LpmMapIpv6)
 		}
 	}()
 }
 
-func DumpMap(v4, v6 *ebpf.Map) { // felt cute might delete later (only for testing atm)
+func (f *Filter) DumpMap() { // felt cute might delete later (only for testing atm)
 	fmt.Println("printing trie map contents:")
 
 	var k4 LPMKey
 	var val BlockInfo
-	it4 := v4.Iterate()
+	it4 := f.objs.LpmMap.Iterate()
 	for it4.Next(&k4, &val) {
 		fmt.Printf("%s/%d  expires=%d hits=%d reason=%d\n",
 			keyIPString(k4), k4.PrefixLen, val.ExpiresAtNs, val.HitCount, val.Reason)
@@ -150,7 +149,7 @@ func DumpMap(v4, v6 *ebpf.Map) { // felt cute might delete later (only for testi
 	}
 
 	var k6 LPMKey6
-	it6 := v6.Iterate()
+	it6 := f.objs.LpmMapIpv6.Iterate()
 	for it6.Next(&k6, &val) {
 		fmt.Printf("%s/%d  expires=%d hits=%d reason=%d\n",
 			key6IPString(k6), k6.PrefixLen, val.ExpiresAtNs, val.HitCount, val.Reason)
@@ -160,44 +159,42 @@ func DumpMap(v4, v6 *ebpf.Map) { // felt cute might delete later (only for testi
 	}
 }
 
-func main() {
+// detach XDP and free BPF resources
+func (f *Filter) Close() {
+	_ = f.xdpLink.Close()
+	f.objs.Close()
+}
+
+func New(ifaceName string) (*Filter, error) {
 	if err := rlimit.RemoveMemlock(); err != nil {
-		log.Fatalf("remove memlock: %v", err)
+		return nil, err
 	}
 
 	var objs bpfObjects
 	if err := loadBpfObjects(&objs, nil); err != nil {
-		log.Fatalf("load objects: %v", err)
+		return nil, err
 	}
-	defer objs.Close()
 
-	const ifaceName = InterfaceName // use ip link and use your interface name here
 	iface, err := net.InterfaceByName(ifaceName)
 	if err != nil {
-		log.Fatalf("interface %q: %v", ifaceName, err)
+		objs.Close()
+		return nil, err
 	}
 
 	xdpLink, err := link.AttachXDP(link.XDPOptions{
 		Program:   objs.Filter,
 		Interface: iface.Index,
-		Flags:     link.XDPGenericMode, // works on any interfact includnig wifi
+		Flags:     link.XDPGenericMode, // works on any interface including wifi
 	})
 	if err != nil {
-		log.Fatalf("attach xdp: %v", err)
+		objs.Close()
+		return nil, err
 	}
-	defer xdpLink.Close()
 
 	fmt.Println("XDP attached to", iface.Name)
 
-	must(AddBlocked(objs.LpmMap, objs.LpmMapIpv6, TestBlockIP, 5*time.Minute, BLOCK_THREATFEED))
-
-	DumpMap(objs.LpmMap, objs.LpmMapIpv6)
-	StartGC(objs.LpmMap, objs.LpmMapIpv6)
-
-	fmt.Println("Running, press ctrl c to stop")
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, os.Interrupt)
-	<-sig
-
-	fmt.Println("Detaching XDP...")
+	return &Filter{
+		objs:    objs,
+		xdpLink: xdpLink,
+	}, nil
 }
