@@ -4,9 +4,6 @@ FILTER_DIR    := internal/filter
 SNIFFER_DIR   := internal/sniffer
 H3SNIFFER_DIR := internal/http3_sniffer
 MAIN_DIR   	  := internal/main
-
-FILTER_BIN    := $(FILTER_DIR)/xdp-loader
-SNIFFER_BIN   := $(SNIFFER_DIR)/sniffer
 H3SNIFFER_BIN := $(H3SNIFFER_DIR)/http3-sniffer
 MAIN_BIN   	  := $(MAIN_DIR)/main
 
@@ -34,12 +31,10 @@ build: filter sniffer main
 filter: generatefilter
 	@echo "Building XDP loader..."
 	cd $(FILTER_DIR) && go build -buildvcs=false -o xdp-loader
-	@echo "Build complete: ./$(FILTER_BIN)"
 
 sniffer: generatesniffer
 	@echo "Building SSL sniffer..."
 	cd $(SNIFFER_DIR) && go build -buildvcs=false -o sniffer
-	@echo "Build complete: ./$(SNIFFER_BIN)"
 
 h3sniffer: generateh3sniffer
 	@echo "Building HTTP/3 header sniffer..."
@@ -51,14 +46,12 @@ main:
 	cd $(MAIN_DIR) && go build -buildvcs=false -o main
 	@echo "Build complete: ./$(MAIN_BIN)"
 
-run-sniffer:
-	sudo ./$(SNIFFER_BIN)
 
 run-h3sniffer:
 	sudo ./$(H3SNIFFER_BIN)
 
-run-main:
-	sudo ./$(MAIN)
+run:
+	sudo ./$(MAIN_BIN)
 
 deps:
 	@echo "Tidying Go dependencies..."
@@ -101,7 +94,7 @@ fmt:
 
 clean:
 	@echo "Cleaning build artifacts..."
-	rm -f $(FILTER_BIN) $(SNIFFER_BIN) $(H3SNIFFER_BIN)
+	rm -f $(MAIN_BIN) $(H3SNIFFER_BIN)
 	rm -f $(FILTER_DIR)/bpf_bpfel.go  $(FILTER_DIR)/bpf_bpfel.o
 	rm -f $(FILTER_DIR)/bpf_bpfeb.go  $(FILTER_DIR)/bpf_bpfeb.o
 	rm -f $(SNIFFER_DIR)/bpf_bpfel.go $(SNIFFER_DIR)/bpf_bpfel.o
@@ -141,6 +134,5 @@ help:
 	@echo "  make docker-ps        - Show running containers"
 	@echo ""
 	@echo "Run (requires sudo):"
-	@echo "  make run-sniffer     - Build + run the SSL sniffer as root"
-	@echo "  make run-main        - Build + run the main as root"
+	@echo "  make run             - Build + run the main as root"
 	@echo "  make run-h3sniffer   - Build + run the HTTP/3 header sniffer as root"
