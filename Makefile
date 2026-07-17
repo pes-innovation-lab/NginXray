@@ -1,4 +1,4 @@
-.PHONY: all setup vmlinux deps build generate clean filter sniffer h3sniffer run-filter run-sniffer run-h3sniffer fmt help docker-up docker-down docker-restart docker-logs docker-ps
+.PHONY: all setup vmlinux deps build generate clean filter sniffer h3sniffer run-sniffer run-h3sniffer fmt help docker-up docker-down docker-restart docker-logs docker-ps
 
 FILTER_DIR    := internal/filter
 SNIFFER_DIR   := internal/sniffer
@@ -27,7 +27,7 @@ generateh3sniffer:
 	cd $(H3SNIFFER_DIR) && go generate
 
 
-build: filter sniffer h3sniffer
+build: filter sniffer 
 
 filter: generatefilter
 	@echo "Building XDP loader..."
@@ -44,8 +44,6 @@ h3sniffer: generateh3sniffer
 	cd $(H3SNIFFER_DIR) && go build -buildvcs=false -o http3-sniffer
 	@echo "Build complete: ./$(H3SNIFFER_BIN)"
 
-run-filter:
-	sudo ./$(FILTER_BIN)
 
 run-sniffer:
 	sudo ./$(SNIFFER_BIN)
@@ -132,6 +130,5 @@ help:
 	@echo "  make docker-ps        - Show running containers"
 	@echo ""
 	@echo "Run (requires sudo):"
-	@echo "  make run-filter      - Build + run the XDP loader as root"
 	@echo "  make run-sniffer     - Build + run the SSL sniffer as root"
 	@echo "  make run-h3sniffer   - Build + run the HTTP/3 header sniffer as root"
