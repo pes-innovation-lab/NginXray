@@ -40,6 +40,23 @@ const indexTemplateBody = `{
   }
 }`
 
+const securityTemplateBody = `{
+  "index_patterns": ["nginxray-security*"],
+  "priority": 100,
+  "template": {
+    "mappings": {
+      "properties": {
+        "timestamp":  { "type": "date" },
+        "clientIP":   { "type": "ip" },
+        "method":     { "type": "keyword" },
+        "path":       { "type": "keyword" },
+        "attackType": { "type": "keyword" },
+        "pattern":    { "type": "keyword" },
+        "score":      { "type": "integer" }
+      }
+    }
+  }
+}`
 
 func Init() {
 	client, err := elasticsearch.NewTyped(
@@ -67,6 +84,7 @@ func Init() {
 	log.Printf("Connected to Elasticsearch cluster %q\n", info.ClusterName)
 
 	startWorker()
+	startDetectionWorker()
 }
 
 func ensureIndexTemplate() error {
@@ -91,5 +109,35 @@ func ensureIndexTemplate() error {
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
 	}
+	return nil
+}
+
+func ensureSecurityTemplate() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPut,
+		esAddr+"/_index_template/nginxray-security-template",
+		bytes.NewBufferString(securityTemplateBody),
+	)
+	if err != nil {
+		return err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
+	}
+
 	return nil
 }

@@ -12,7 +12,10 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
+	analysis "nginxray/internal/analysis"
+	filter "nginxray/internal/filter"
 	logger "nginxray/internal/logger"
 	masking "nginxray/internal/masking"
 	http1parser "nginxray/internal/parser"
@@ -148,6 +151,15 @@ func main() {
 
 	logger.Init()
 
+	// get filter started
+	fw, err := filter.New(filter.InterfaceName)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer fw.Close()
+
+	fw.StartGC()
+
 	// get ssl executable
 	path, err := findLibSSLPath()
 	if err != nil {
@@ -269,20 +281,47 @@ func main() {
 		clientIP := ipStr(buf.Family, buf.Client_ip)
 		serverIP := ipStr(buf.Family, buf.Server_ip)
 
+		// context for analysis also centralized time
+		eventTime := time.Now()
+		ctx := analysis.RequestContext{
+			Timestamp: eventTime.Format(time.RFC3339Nano),
+			ClientIP:  clientIP,
+		}
+
 		if conn.proto == http1parser.ProtoHTTP2 {
 			truncated := buf.Len == maxCapturedRead
 			if isReq {
 				for _, m := range conn.h2.FeedRequest(data, truncated) {
+
+					detections := analysis.AnalyseReq(*m.Request, ctx)
+
+					for _, det := range detections {
+						logger.LogDetection(det)
+					}
+
+					action := analysis.Decide(clientIP, detections)
+
+					if action == analysis.Block {
+						if err := fw.AddBlocked(
+							clientIP,
+							500*time.Hour,
+							filter.BLOCK_L7_DETECT,
+						); err != nil {
+							log.Printf("failed to block %s: %v", clientIP, err)
+						}
+						fw.DumpMap()
+					}
+
 					http1parser.DecodeRequestBody(m.Request)
 					masking.MaskRequest(m.Request)
-					logger.LogRequest(m.Request, buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port)
+					logger.LogRequest(m.Request, buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port, ctx.Timestamp)
 					printH2Request(buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port, m)
 				}
 			} else {
 				for _, m := range conn.h2.FeedResponse(data, truncated) {
 					http1parser.DecodeResponseBody(m.Response) 
 					masking.MaskResponse(m.Response)
-					logger.LogResponse(m.Response, buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port)
+					logger.LogResponse(m.Response, buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port, ctx.Timestamp)
 					printH2Response(buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port, m)
 				}
 			}
@@ -304,9 +343,28 @@ func main() {
 				rb := conn.request_buffer.Bytes()
 				if len(rb) >= http1parser.PrefaceLen {
 					for _, m := range conn.h2.FeedRequest(rb[http1parser.PrefaceLen:], false) {
+						detections := analysis.AnalyseReq(*m.Request, ctx)
+
+						for _, det := range detections {
+							logger.LogDetection(det)
+						}
+
+						action := analysis.Decide(clientIP, detections)
+
+						if action == analysis.Block {
+							if err := fw.AddBlocked(
+								clientIP,
+								500*time.Hour,
+								filter.BLOCK_L7_DETECT,
+							); err != nil {
+								log.Printf("failed to block %s: %v", clientIP, err)
+							}
+							fw.DumpMap()
+						}
+
 						http1parser.DecodeRequestBody(m.Request)
 						masking.MaskRequest(m.Request)
-						logger.LogRequest(m.Request, buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port)
+						logger.LogRequest(m.Request, buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port, ctx.Timestamp)
 						printH2Request(buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port, m)
 					}
 				}
@@ -315,7 +373,7 @@ func main() {
 					for _, m := range conn.h2.FeedResponse(conn.response_buffer.Bytes(), false) {
 						http1parser.DecodeResponseBody(m.Response) 
 						masking.MaskResponse(m.Response)
-						logger.LogResponse(m.Response, buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port)
+						logger.LogResponse(m.Response, buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port, ctx.Timestamp)
 						printH2Response(buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port, m)
 					}
 					conn.response_buffer.Reset()
@@ -337,11 +395,35 @@ func main() {
 				if !ok {
 					break
 				}
+
+				// analyse request
+				detections := analysis.AnalyseReq(*req, ctx)
+
+				// log every detection
+				for _, det := range detections {
+					logger.LogDetection(det)
+				}
+
+				// decide what to do
+				action := analysis.Decide(clientIP, detections)
+
+				if action == analysis.Block {
+					if err := fw.AddBlocked(
+						clientIP,
+						500*time.Hour,
+						filter.BLOCK_L7_DETECT,
+					); err != nil {
+						log.Printf("failed to block %s: %v", clientIP, err)
+					}
+					fw.DumpMap()
+				}
+				// mask req before logging
 				http1parser.DecodeRequestBody(req)
 				// mask req before printing
 				masking.MaskRequest(req)
+
 				// log to elasticsearch
-				logger.LogRequest(req, buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port)
+				logger.LogRequest(req, buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port, ctx.Timestamp)
 
 				fmt.Printf(
 					"pid=%d tid=%d\n%s %s %s\nclient=%s:%d server=%s:%d\n",
@@ -370,7 +452,7 @@ func main() {
 				}
 				http1parser.DecodeResponseBody(resp) 
 				masking.MaskResponse(resp)
-				logger.LogResponse(resp, buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port)
+				logger.LogResponse(resp, buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port, ctx.Timestamp)
 
 				fmt.Printf(
 					"pid=%d tid=%d\n%s %d %s\nclient=%s:%d server=%s:%d\n",
