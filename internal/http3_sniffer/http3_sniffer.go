@@ -1,4 +1,4 @@
-package main
+package h3sniffer
 
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang h3 ../../bpf/http3_headers.bpf.c -- -I../../bpf -D__TARGET_ARCH_x86
 
@@ -543,7 +543,7 @@ func respEventLoop(respRd *ringbuf.Reader) {
 	}
 }
 
-func reqEventLoop(rd *ringbuf.Reader) {
+func reqEventLoop(rd *ringbuf.Reader, fw *filter.Filter) {
 	var ev reqHeader
 	for {
 		record, err := rd.Read()
@@ -570,7 +570,7 @@ func reqEventLoop(rd *ringbuf.Reader) {
 				value := string(ev.Value[:ev.ValueLen])
 				appendReqField(ev.ConnID, ip, ev.PidTgid, name, value)
 			}
-			emitRequest(ev.ConnID)
+			emitRequest(ev.ConnID, fw)
 
 		case ngxOK:
 			name := string(ev.Name[:ev.NameLen])
@@ -584,7 +584,7 @@ func reqEventLoop(rd *ringbuf.Reader) {
 	}
 }
 
-func main() {
+func Main(fw *filter.Filter) {
 	binPath := flag.String("nginx-bin", "/usr/bin/nginx", "path to nginx binary to attach uprobes to")
 	listenAddr := flag.String("listen", "", "nginx QUIC listen address (ip:port) reported as the server side of logged events")
 	flag.Parse()
@@ -679,5 +679,5 @@ func main() {
 	go tableEventLoop(tableRd)
 	go respEventLoop(respRd)
 
-	reqEventLoop(rd)
+	reqEventLoop(rd, fw)
 }

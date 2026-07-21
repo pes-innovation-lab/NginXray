@@ -12,6 +12,7 @@ internal/filter/local_config.go
 internal/filter/xdp-loader
 internal/sniffer/sniffer
 internal/http3_sniffer/http3-sniffer
+internal/main/main
 *.test
 *.out
 coverage.*

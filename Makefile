@@ -26,7 +26,7 @@ generateh3sniffer:
 	cd $(H3SNIFFER_DIR) && go generate
 
 
-build: filter sniffer main
+build: filter sniffer h3sniffer main
 
 filter: generatefilter
 	@echo "Building XDP loader..."

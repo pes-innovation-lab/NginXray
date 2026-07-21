@@ -16,5 +16,6 @@ func main() {
 
 	fw.StartGC()
 
-	sniffer.Main(fw)
+	go sniffer.Main(fw)
+	//h3sniffer.Main(fw)
 }
