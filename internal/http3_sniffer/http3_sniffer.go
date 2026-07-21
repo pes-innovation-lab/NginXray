@@ -416,7 +416,10 @@ func emitRequest(conn uint64) {
 	pid, tid := pidTid(pr.pidTgid)
 	clientIP, clientPort := splitHostPort(pr.ip)
 
-	logger.LogRequest(req, pid, tid, clientIP, clientPort, serverIP, serverPort)
+	eventTime := time.Now()
+	timestamp := eventTime.Format(time.RFC3339Nano)
+
+	logger.LogRequest(req, pid, tid, clientIP, clientPort, serverIP, serverPort, timestamp)
 }
 
 func emitResponse(pr *pendingResponse) {
@@ -430,7 +433,10 @@ func emitResponse(pr *pendingResponse) {
 	pid, tid := pidTid(pr.pidTgid)
 	clientIP, clientPort := splitHostPort(pr.ip)
 
-	logger.LogResponse(resp, pid, tid, clientIP, clientPort, serverIP, serverPort)
+	eventTime := time.Now()
+	timestamp := eventTime.Format(time.RFC3339Nano)
+
+	logger.LogResponse(resp, pid, tid, clientIP, clientPort, serverIP, serverPort, timestamp)
 }
 
 func tableEventLoop(tableRd *ringbuf.Reader) {
