@@ -1,4 +1,4 @@
-package main
+package sniffer
 
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang bpf ../../bpf/ssl_hook.bpf.c -- -I../../bpf -D__TARGET_ARCH_x86
 
@@ -136,7 +136,7 @@ func findLibSSLPath() (string, error) {
 	return "", fmt.Errorf("libssl library path not found on this system")
 }
 
-func main() {
+func Main(fw *filter.Filter) {
 	// only for kernels <5.11
 	if err := rlimit.RemoveMemlock(); err != nil {
 		log.Fatalf("removing memlock %s", err)
@@ -150,15 +150,6 @@ func main() {
 	defer objs.Close()
 
 	logger.Init()
-
-	// get filter started
-	fw, err := filter.New(filter.InterfaceName)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer fw.Close()
-
-	fw.StartGC()
 
 	// get ssl executable
 	path, err := findLibSSLPath()
@@ -319,7 +310,7 @@ func main() {
 				}
 			} else {
 				for _, m := range conn.h2.FeedResponse(data, truncated) {
-					http1parser.DecodeResponseBody(m.Response) 
+					http1parser.DecodeResponseBody(m.Response)
 					masking.MaskResponse(m.Response)
 					logger.LogResponse(m.Response, buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port, ctx.Timestamp)
 					printH2Response(buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port, m)
@@ -371,7 +362,7 @@ func main() {
 				conn.request_buffer.Reset()
 				if conn.response_buffer.Len() > 0 { // drain any early response bytes
 					for _, m := range conn.h2.FeedResponse(conn.response_buffer.Bytes(), false) {
-						http1parser.DecodeResponseBody(m.Response) 
+						http1parser.DecodeResponseBody(m.Response)
 						masking.MaskResponse(m.Response)
 						logger.LogResponse(m.Response, buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port, ctx.Timestamp)
 						printH2Response(buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port, m)
@@ -450,7 +441,7 @@ func main() {
 				if !ok {
 					break
 				}
-				http1parser.DecodeResponseBody(resp) 
+				http1parser.DecodeResponseBody(resp)
 				masking.MaskResponse(resp)
 				logger.LogResponse(resp, buf.Pid, buf.Tid, clientIP, buf.Client_port, serverIP, buf.Server_port, ctx.Timestamp)
 

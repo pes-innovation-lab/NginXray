@@ -3,10 +3,9 @@
 FILTER_DIR    := internal/filter
 SNIFFER_DIR   := internal/sniffer
 H3SNIFFER_DIR := internal/http3_sniffer
-
-FILTER_BIN    := $(FILTER_DIR)/xdp-loader
-SNIFFER_BIN   := $(SNIFFER_DIR)/sniffer
+MAIN_DIR   	  := internal/main
 H3SNIFFER_BIN := $(H3SNIFFER_DIR)/http3-sniffer
+MAIN_BIN   	  := $(MAIN_DIR)/main
 
 BPF_DIR := bpf
 VMLINUX := $(BPF_DIR)/vmlinux.h
@@ -27,30 +26,32 @@ generateh3sniffer:
 	cd $(H3SNIFFER_DIR) && go generate
 
 
-build: filter sniffer 
+build: filter sniffer main
 
 filter: generatefilter
 	@echo "Building XDP loader..."
 	cd $(FILTER_DIR) && go build -buildvcs=false -o xdp-loader
-	@echo "Build complete: ./$(FILTER_BIN)"
 
 sniffer: generatesniffer
 	@echo "Building SSL sniffer..."
 	cd $(SNIFFER_DIR) && go build -buildvcs=false -o sniffer
-	@echo "Build complete: ./$(SNIFFER_BIN)"
 
 h3sniffer: generateh3sniffer
 	@echo "Building HTTP/3 header sniffer..."
 	cd $(H3SNIFFER_DIR) && go build -buildvcs=false -o http3-sniffer
 	@echo "Build complete: ./$(H3SNIFFER_BIN)"
 
+main:
+	@echo "Building SSL main..."
+	cd $(MAIN_DIR) && go build -buildvcs=false -o main
+	@echo "Build complete: ./$(MAIN_BIN)"
 
-run-sniffer:
-	sudo ./$(SNIFFER_BIN)
 
 run-h3sniffer:
 	sudo ./$(H3SNIFFER_BIN)
 
+run:
+	sudo ./$(MAIN_BIN)
 
 deps:
 	@echo "Tidying Go dependencies..."
@@ -93,13 +94,15 @@ fmt:
 
 clean:
 	@echo "Cleaning build artifacts..."
-	rm -f $(FILTER_BIN) $(SNIFFER_BIN) $(H3SNIFFER_BIN)
+	rm -f $(MAIN_BIN) $(H3SNIFFER_BIN)
 	rm -f $(FILTER_DIR)/bpf_bpfel.go  $(FILTER_DIR)/bpf_bpfel.o
 	rm -f $(FILTER_DIR)/bpf_bpfeb.go  $(FILTER_DIR)/bpf_bpfeb.o
 	rm -f $(SNIFFER_DIR)/bpf_bpfel.go $(SNIFFER_DIR)/bpf_bpfel.o
 	rm -f $(SNIFFER_DIR)/bpf_bpfeb.go $(SNIFFER_DIR)/bpf_bpfeb.o
 	rm -f $(H3SNIFFER_DIR)/h3_bpfel.go $(H3SNIFFER_DIR)/h3_bpfel.o
 	rm -f $(H3SNIFFER_DIR)/h3_bpfeb.go $(H3SNIFFER_DIR)/h3_bpfeb.o
+	rm -f $(MAIN_DIR)/bpf_bpfel.go $(MAIN_DIR)/bpf_bpfel.o
+	rm -f $(MAIN_DIR)/bpf_bpfeb.go $(MAIN_DIR)/bpf_bpfeb.o
 	@echo "Clean complete"
 
 help:
@@ -110,10 +113,11 @@ help:
 	@echo "  make setup        - Generate vmlinux.h + tidy Go deps"
 	@echo ""
 	@echo "Build:"
-	@echo "  make build              - Generate eBPF + build both binaries"
+	@echo "  make build              - Generate eBPF + build all three binaries"
 	@echo "  make filter             - Build only the XDP loader"
 	@echo "  make sniffer            - Build only the SSL sniffer"
 	@echo "  make h3sniffer          - Build only the HTTP/3 header sniffer"
+	@echo "  make main               - Build only the main"
 	@echo "  make generatefilter     - Run bpf2go codegen in filter dir"
 	@echo "  make generatesniffer    - Run bpf2go codegen in sniffer dir"
 	@echo "  make generateh3sniffer  - Run bpf2go codegen in http3_sniffer dir"
@@ -130,5 +134,5 @@ help:
 	@echo "  make docker-ps        - Show running containers"
 	@echo ""
 	@echo "Run (requires sudo):"
-	@echo "  make run-sniffer     - Build + run the SSL sniffer as root"
+	@echo "  make run             - Build + run the main as root"
 	@echo "  make run-h3sniffer   - Build + run the HTTP/3 header sniffer as root"
