@@ -16,6 +16,8 @@ import (
 	"syscall"
 	"time"
 
+	analysis "nginxray/internal/analysis"
+	filter "nginxray/internal/filter"
 	logger "nginxray/internal/logger"
 	masking "nginxray/internal/masking"
 	http1parser "nginxray/internal/parser"
@@ -404,7 +406,7 @@ func buildResponse(fields []headerPair) *http1parser.HTTPResponse {
 	return resp
 }
 
-func emitRequest(conn uint64) {
+func emitRequest(conn uint64, fw *filter.Filter) {
 	pr := takeReqFields(conn)
 	if pr == nil || len(pr.fields) == 0 {
 		return
@@ -417,9 +419,30 @@ func emitRequest(conn uint64) {
 	clientIP, clientPort := splitHostPort(pr.ip)
 
 	eventTime := time.Now()
-	timestamp := eventTime.Format(time.RFC3339Nano)
+	ctx := analysis.RequestContext{
+		Timestamp: eventTime.Format(time.RFC3339Nano),
+		ClientIP:  clientIP,
+	}
 
-	logger.LogRequest(req, pid, tid, clientIP, clientPort, serverIP, serverPort, timestamp)
+	detections := analysis.AnalyseReq(*req, ctx)
+
+	for _, det := range detections {
+		logger.LogDetection(det)
+	}
+
+	action := analysis.Decide(clientIP, detections)
+
+	if action == analysis.Block {
+		if err := fw.AddBlocked(
+			clientIP,
+			500*time.Hour,
+			filter.BLOCK_L7_DETECT,
+		); err != nil {
+			log.Printf("failed to block %s: %v", clientIP, err)
+		}
+		fw.DumpMap()
+	}
+	logger.LogRequest(req, pid, tid, clientIP, clientPort, serverIP, serverPort, ctx.Timestamp)
 }
 
 func emitResponse(pr *pendingResponse) {
@@ -434,9 +457,11 @@ func emitResponse(pr *pendingResponse) {
 	clientIP, clientPort := splitHostPort(pr.ip)
 
 	eventTime := time.Now()
-	timestamp := eventTime.Format(time.RFC3339Nano)
-
-	logger.LogResponse(resp, pid, tid, clientIP, clientPort, serverIP, serverPort, timestamp)
+	ctx := analysis.RequestContext{
+		Timestamp: eventTime.Format(time.RFC3339Nano),
+		ClientIP:  clientIP,
+	}
+	logger.LogResponse(resp, pid, tid, clientIP, clientPort, serverIP, serverPort, ctx.Timestamp)
 }
 
 func tableEventLoop(tableRd *ringbuf.Reader) {
