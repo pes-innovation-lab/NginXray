@@ -35,6 +35,7 @@ var detectors = []Detector{
 	detectSQLi,
 	detectCmdi,
 	detectTraversal,
+	detectXSS,
 }
 
 // common sql patterns to check against
