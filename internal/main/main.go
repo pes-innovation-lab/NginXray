@@ -1,7 +1,6 @@
 package main
 
 import (
-	"flag"
 	"log"
 	filter "nginxray/internal/filter"
 	sniffer "nginxray/internal/sniffer"
@@ -9,8 +8,6 @@ import (
 )
 
 func main() {
-	flag.Parse()
-
 	// get filter started
 	fw, err := filter.New(filter.InterfaceName)
 	if err != nil {

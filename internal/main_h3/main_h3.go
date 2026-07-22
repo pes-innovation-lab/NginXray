@@ -1,7 +1,6 @@
-package main_h3
+package main
 
 import (
-	"flag"
 	"log"
 	filter "nginxray/internal/filter"
 	h3sniffer "nginxray/internal/http3_sniffer"
@@ -10,8 +9,6 @@ import (
 )
 
 func main() {
-	flag.Parse()
-
 	// get filter started
 	fw, err := filter.New(filter.InterfaceName)
 	if err != nil {
