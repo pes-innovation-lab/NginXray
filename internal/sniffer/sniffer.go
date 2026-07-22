@@ -11,7 +11,9 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	analysis "nginxray/internal/analysis"
@@ -233,6 +235,13 @@ func Main(fw *filter.Filter) {
 		log.Fatalf("creating ringbuffer reader %s", err)
 	}
 	defer rd.Close()
+
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-stop
+		rd.Close()
+	}()
 
 	connections := make(map[uint64]*connection)
 
