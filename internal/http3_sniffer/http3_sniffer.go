@@ -591,6 +591,8 @@ func Main(fw *filter.Filter) {
 
 	if *listenAddr != "" {
 		serverIP, serverPort = splitHostPort(*listenAddr)
+	} else {
+		serverIP, serverPort = "0.0.0.0", 443
 	}
 
 	if err := rlimit.RemoveMemlock(); err != nil {
