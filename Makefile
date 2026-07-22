@@ -1,4 +1,4 @@
-.PHONY: all setup vmlinux deps build generate clean filter sniffer h3sniffer run-sniffer run-h3sniffer fmt help docker-up docker-down docker-restart docker-logs docker-ps
+.PHONY: all setup vmlinux deps build build-h3 generate clean filter sniffer h3sniffer run-sniffer run-h3sniffer run run-h3 fmt help docker-up docker-down docker-restart docker-logs docker-ps
 
 FILTER_DIR    := internal/filter
 SNIFFER_DIR   := internal/sniffer
@@ -26,7 +26,9 @@ generateh3sniffer:
 	cd $(H3SNIFFER_DIR) && go generate
 
 
-build: filter sniffer h3sniffer main
+build: filter sniffer main
+
+build-h3: filter sniffer h3sniffer main
 
 filter: generatefilter
 	@echo "Building XDP loader..."
@@ -52,6 +54,9 @@ run-h3sniffer:
 
 run:
 	sudo ./$(MAIN_BIN)
+
+run-h3:
+	sudo ./$(MAIN_BIN) -h3sniffer
 
 deps:
 	@echo "Tidying Go dependencies..."
@@ -113,7 +118,8 @@ help:
 	@echo "  make setup        - Generate vmlinux.h + tidy Go deps"
 	@echo ""
 	@echo "Build:"
-	@echo "  make build              - Generate eBPF + build all three binaries"
+	@echo "  make build              - Generate eBPF + build filter, sniffer, main"
+	@echo "  make build-h3           - Generate eBPF + build filter, sniffer, h3sniffer, main"
 	@echo "  make filter             - Build only the XDP loader"
 	@echo "  make sniffer            - Build only the SSL sniffer"
 	@echo "  make h3sniffer          - Build only the HTTP/3 header sniffer"
@@ -135,4 +141,5 @@ help:
 	@echo ""
 	@echo "Run (requires sudo):"
 	@echo "  make run             - Build + run the main as root"
+	@echo "  make run-h3          - Build + run the main as root with -h3sniffer enabled"
 	@echo "  make run-h3sniffer   - Build + run the HTTP/3 header sniffer as root"
