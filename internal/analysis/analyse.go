@@ -35,6 +35,7 @@ var detectors = []Detector{
 	detectSQLi,
 	detectCmdi,
 	detectTraversal,
+	detectXSS,
 }
 
 // common sql patterns to check against
@@ -91,6 +92,14 @@ var traversalPatterns = []string{
 	"/etc/shadow",
 	"windows/system32",
 	"boot.ini",
+}
+
+var xssPatterns = []string{
+	"localstorage",
+	"sessionstorage",
+	"document.cookie",
+	"xmlhttpRequest",
+	"location",
 }
 
 // maybe something we can look at later
@@ -197,6 +206,36 @@ func detectTraversal(ctx RequestContext, req parser.HTTPRequest) *Detection {
 				Method:     req.Method,
 				Path:       req.Path,
 				AttackType: "Path Traversal",
+				Pattern:    pattern,
+				Score:      90,
+			}
+		}
+	}
+	return nil
+}
+
+func detectXSS(ctx RequestContext, req parser.HTTPRequest) *Detection {
+	var input strings.Builder
+
+	input.WriteString(req.Path)
+	input.WriteString(" ")
+
+	input.Write(req.Body)
+
+	data := strings.ToLower(input.String())
+
+	if decoded, err := url.QueryUnescape(data); err == nil {
+		data = decoded
+	}
+
+	for _, pattern := range xssPatterns {
+		if strings.Contains(data, pattern) {
+			return &Detection{
+				Timestamp:  ctx.Timestamp,
+				ClientIP:   ctx.ClientIP,
+				Method:     req.Method,
+				Path:       req.Path,
+				AttackType: "XSS",
 				Pattern:    pattern,
 				Score:      90,
 			}
