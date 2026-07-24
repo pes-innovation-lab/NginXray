@@ -1,4 +1,4 @@
-package main
+package h3sniffer
 
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang h3 ../../bpf/http3_headers.bpf.c -- -I../../bpf -D__TARGET_ARCH_x86
 
@@ -16,6 +16,8 @@ import (
 	"syscall"
 	"time"
 
+	analysis "nginxray/internal/analysis"
+	filter "nginxray/internal/filter"
 	logger "nginxray/internal/logger"
 	masking "nginxray/internal/masking"
 	http1parser "nginxray/internal/parser"
@@ -404,7 +406,7 @@ func buildResponse(fields []headerPair) *http1parser.HTTPResponse {
 	return resp
 }
 
-func emitRequest(conn uint64) {
+func emitRequest(conn uint64, fw *filter.Filter) {
 	pr := takeReqFields(conn)
 	if pr == nil || len(pr.fields) == 0 {
 		return
@@ -416,7 +418,31 @@ func emitRequest(conn uint64) {
 	pid, tid := pidTid(pr.pidTgid)
 	clientIP, clientPort := splitHostPort(pr.ip)
 
-	logger.LogRequest(req, pid, tid, clientIP, clientPort, serverIP, serverPort)
+	eventTime := time.Now()
+	ctx := analysis.RequestContext{
+		Timestamp: eventTime.Format(time.RFC3339Nano),
+		ClientIP:  clientIP,
+	}
+
+	detections := analysis.AnalyseReq(*req, ctx)
+
+	for _, det := range detections {
+		logger.LogDetection(det)
+	}
+
+	action := analysis.Decide(clientIP, detections)
+
+	if action == analysis.Block {
+		if err := fw.AddBlocked(
+			clientIP,
+			500*time.Hour,
+			filter.BLOCK_L7_DETECT,
+		); err != nil {
+			log.Printf("failed to block %s: %v", clientIP, err)
+		}
+		fw.DumpMap()
+	}
+	logger.LogRequest(req, pid, tid, clientIP, clientPort, serverIP, serverPort, ctx.Timestamp)
 }
 
 func emitResponse(pr *pendingResponse) {
@@ -430,7 +456,12 @@ func emitResponse(pr *pendingResponse) {
 	pid, tid := pidTid(pr.pidTgid)
 	clientIP, clientPort := splitHostPort(pr.ip)
 
-	logger.LogResponse(resp, pid, tid, clientIP, clientPort, serverIP, serverPort)
+	eventTime := time.Now()
+	ctx := analysis.RequestContext{
+		Timestamp: eventTime.Format(time.RFC3339Nano),
+		ClientIP:  clientIP,
+	}
+	logger.LogResponse(resp, pid, tid, clientIP, clientPort, serverIP, serverPort, ctx.Timestamp)
 }
 
 func tableEventLoop(tableRd *ringbuf.Reader) {
@@ -512,7 +543,7 @@ func respEventLoop(respRd *ringbuf.Reader) {
 	}
 }
 
-func reqEventLoop(rd *ringbuf.Reader) {
+func reqEventLoop(rd *ringbuf.Reader, fw *filter.Filter) {
 	var ev reqHeader
 	for {
 		record, err := rd.Read()
@@ -539,7 +570,7 @@ func reqEventLoop(rd *ringbuf.Reader) {
 				value := string(ev.Value[:ev.ValueLen])
 				appendReqField(ev.ConnID, ip, ev.PidTgid, name, value)
 			}
-			emitRequest(ev.ConnID)
+			emitRequest(ev.ConnID, fw)
 
 		case ngxOK:
 			name := string(ev.Name[:ev.NameLen])
@@ -553,13 +584,15 @@ func reqEventLoop(rd *ringbuf.Reader) {
 	}
 }
 
-func main() {
+func Main(fw *filter.Filter) {
 	binPath := flag.String("nginx-bin", "/usr/bin/nginx", "path to nginx binary to attach uprobes to")
 	listenAddr := flag.String("listen", "", "nginx QUIC listen address (ip:port) reported as the server side of logged events")
 	flag.Parse()
 
 	if *listenAddr != "" {
 		serverIP, serverPort = splitHostPort(*listenAddr)
+	} else {
+		serverIP, serverPort = "0.0.0.0", 443
 	}
 
 	if err := rlimit.RemoveMemlock(); err != nil {
@@ -648,5 +681,5 @@ func main() {
 	go tableEventLoop(tableRd)
 	go respEventLoop(respRd)
 
-	reqEventLoop(rd)
+	reqEventLoop(rd, fw)
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	filter "nginxray/internal/filter"
+	h3sniffer "nginxray/internal/http3_sniffer"
 	sniffer "nginxray/internal/sniffer"
 	"time"
 )
@@ -18,5 +19,6 @@ func main() {
 	fw.StartGC()
 	fw.AddBlocked(filter.TestBlockIP, 5*time.Minute, filter.BLOCK_THREATFEED)
 
+	go h3sniffer.Main(fw)
 	sniffer.Main(fw)
 }

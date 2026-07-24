@@ -1,11 +1,13 @@
-.PHONY: all setup vmlinux deps build generate clean filter sniffer h3sniffer run-sniffer run-h3sniffer fmt help docker-up docker-down docker-restart docker-logs docker-ps
+.PHONY: all setup vmlinux deps build build-h3 generate clean filter sniffer h3sniffer run-sniffer run-h3sniffer run run-h3 fmt help docker-up docker-down docker-restart docker-logs docker-ps
 
 FILTER_DIR    := internal/filter
 SNIFFER_DIR   := internal/sniffer
 H3SNIFFER_DIR := internal/http3_sniffer
 MAIN_DIR   	  := internal/main
+MAIN_H3_DIR   	  := internal/main_h3
 H3SNIFFER_BIN := $(H3SNIFFER_DIR)/http3-sniffer
 MAIN_BIN   	  := $(MAIN_DIR)/main
+MAIN_H3_BIN   	  := $(MAIN_H3_DIR)/main-h3
 
 BPF_DIR := bpf
 VMLINUX := $(BPF_DIR)/vmlinux.h
@@ -28,6 +30,8 @@ generateh3sniffer:
 
 build: filter sniffer main
 
+build-h3: filter sniffer h3sniffer main-h3
+
 filter: generatefilter
 	@echo "Building XDP loader..."
 	cd $(FILTER_DIR) && go build -buildvcs=false -o xdp-loader
@@ -46,12 +50,16 @@ main:
 	cd $(MAIN_DIR) && go build -buildvcs=false -o main
 	@echo "Build complete: ./$(MAIN_BIN)"
 
-
-run-h3sniffer:
-	sudo ./$(H3SNIFFER_BIN)
+main-h3:
+	@echo "Building SSL main-h3..."
+	cd $(MAIN_H3_DIR) && go build -buildvcs=false -o main-h3
+	@echo "Build complete: ./$(MAIN_H3_BIN)"
 
 run:
 	sudo ./$(MAIN_BIN)
+
+run-h3:
+	sudo ./$(MAIN_H3_BIN)
 
 deps:
 	@echo "Tidying Go dependencies..."
@@ -103,6 +111,8 @@ clean:
 	rm -f $(H3SNIFFER_DIR)/h3_bpfeb.go $(H3SNIFFER_DIR)/h3_bpfeb.o
 	rm -f $(MAIN_DIR)/bpf_bpfel.go $(MAIN_DIR)/bpf_bpfel.o
 	rm -f $(MAIN_DIR)/bpf_bpfeb.go $(MAIN_DIR)/bpf_bpfeb.o
+	rm -f $(MAIN_H3_DIR)/bpf_bpfel.go $(MAIN_H3_DIR)/bpf_bpfel.o
+	rm -f $(MAIN_H3_DIR)/bpf_bpfeb.go $(MAIN_H3_DIR)/bpf_bpfeb.o
 	@echo "Clean complete"
 
 help:
@@ -113,11 +123,13 @@ help:
 	@echo "  make setup        - Generate vmlinux.h + tidy Go deps"
 	@echo ""
 	@echo "Build:"
-	@echo "  make build              - Generate eBPF + build all three binaries"
+	@echo "  make build              - Generate eBPF + build filter, sniffer, main"
+	@echo "  make build-h3           - Generate eBPF + build filter, sniffer, h3sniffer, main"
 	@echo "  make filter             - Build only the XDP loader"
 	@echo "  make sniffer            - Build only the SSL sniffer"
 	@echo "  make h3sniffer          - Build only the HTTP/3 header sniffer"
 	@echo "  make main               - Build only the main"
+	@echo "  make main-h3            - Build the main with HTTP/3 header sniffer"
 	@echo "  make generatefilter     - Run bpf2go codegen in filter dir"
 	@echo "  make generatesniffer    - Run bpf2go codegen in sniffer dir"
 	@echo "  make generateh3sniffer  - Run bpf2go codegen in http3_sniffer dir"
@@ -135,4 +147,4 @@ help:
 	@echo ""
 	@echo "Run (requires sudo):"
 	@echo "  make run             - Build + run the main as root"
-	@echo "  make run-h3sniffer   - Build + run the HTTP/3 header sniffer as root"
+	@echo "  make run-h3          - Build + run the main as root with HTTP/3 support"
