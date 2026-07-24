@@ -585,7 +585,7 @@ func reqEventLoop(rd *ringbuf.Reader, fw *filter.Filter) {
 }
 
 func Main(fw *filter.Filter) {
-	binPath := flag.String("nginx-bin", "/usr/bin/nginx", "path to nginx binary to attach uprobes to")
+	binPath := flag.String("nginx-bin","/usr/bin/nginx", "/usr/sbin/nginx")
 	listenAddr := flag.String("listen", "", "nginx QUIC listen address (ip:port) reported as the server side of logged events")
 	flag.Parse()
 
