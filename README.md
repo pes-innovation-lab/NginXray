@@ -4,8 +4,7 @@ Kernel-Level Edge Defense and Plaintext L7 Observability: An eBPF-Based Security
  
 Mentors: Prachi Jha, Murali Krishna Rao
 Interns: Uttam K R, Sarah Kazi, Rehaan Jose Mathew
- 
-(temporary)
+
  
 ## Dependencies
  
